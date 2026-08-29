@@ -1,4 +1,4 @@
-# Module purpose: Regression-test the calibration-to-evaluation path on deterministic data.
+# Run small deterministic examples through calibration, tuning, and evaluation.
 
 import unittest
 
@@ -9,9 +9,9 @@ from src.evaluation.metrics import evaluate
 from src.functional_pipeline import convert_result, run_final_models
 
 
-# Implement EndToEndTests.
+# These tests connect several modules instead of checking one helper at a time.
 class EndToEndTests(unittest.TestCase):
-    # Keep the multi-market tuning entry point connected to the shared result converter.
+    # Exercise the exact call that previously failed when convert_result was not imported.
     def test_multi_market_tuning_uses_shared_result_converter(self):
         self.assertIs(multi_market_experiment.convert_result, convert_result)
 
@@ -38,7 +38,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(len(table), 1)
         self.assertEqual(selected["eta"], 0.02)
 
-    # Test small calibration and evaluation pipeline.
+    # Run every ACI version on a tiny dataset and compare the final metrics.
     def test_small_calibration_and_evaluation_pipeline(self):
         rng = np.random.default_rng(11)
         train_context = rng.normal(size=(30, 3))

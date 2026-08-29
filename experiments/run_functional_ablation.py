@@ -1,4 +1,4 @@
-# Module purpose: Run context, function-space, and kernel ablation experiments.
+# Run the three ablation studies used to understand which parts of HF-ACI matter.
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from src.ablation_reporting import (  # noqa: E402
 from src.protocol import DEVELOPMENT_PROTOCOL, PAPER_MARKETS  # noqa: E402
 
 
-# Parse args.
+# Read input folders, markets, shared settings, and the optional quick flag.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -84,16 +84,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-# Main.
+# Run every ablation and save both market-level and averaged results.
 def main() -> None:
     args = parse_args()
 
-    # Read runtime arguments and prepare experiment output directories.
+    # Keep tables, plots, and selected-parameter details in separate folders.
     tables_dir = (
         args.output / "tables"
     )
 
-    # Generate and save figures for headline results and diagnostics.
     figures_dir = (
         args.output / "figures"
     )
@@ -108,7 +107,7 @@ def main() -> None:
 
     diagnostics_dir.mkdir(parents=True, exist_ok=True)
 
-    # Configure hyperparameter candidates for quick or full execution.
+    # Save the exact context lists and kernel grid used by this run.
     configuration = {
         "markets": args.markets,
         "alpha": args.alpha,
@@ -128,7 +127,7 @@ def main() -> None:
         "quick": args.quick,
     }
 
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Writing this first makes quick and full runs easy to tell apart later.
     (
         diagnostics_dir / "ablation_configuration.json"
     ).write_text(
@@ -139,6 +138,7 @@ def main() -> None:
     context_results = []
     kernel_results = []
 
+    # Prepare and evaluate each market separately before taking any averages.
     for market_prefix in args.markets:
         (
             context_table,
@@ -165,12 +165,12 @@ def main() -> None:
 
     context_results = pd.concat(context_results, ignore_index=True)
 
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # Average each context removal across the four markets.
     context_summary = (
         aggregate_context_ablation(context_results)
     )
 
-    # Compute coverage, interval-efficiency, and conditional-coverage metrics.
+    # Compare every reduced context directly with the full-context result.
     context_degradation = (
         add_context_degradation(context_results)
     )
@@ -181,12 +181,14 @@ def main() -> None:
         aggregate_kernel_ablation(kernel_results)
     )
 
+    # Reuse v10 outputs for the scalar/linear/nonlinear function-space comparison.
     (
         function_space_results,
         function_space_average,
         function_space_pairwise,
     ) = build_function_space_tables(args.v10_results)
 
+    # Save detailed rows as well as the shorter tables used in the dissertation.
     context_results.to_csv(tables_dir / "context_ablation_results.csv", index=False)
 
     context_summary.to_csv(tables_dir / "context_ablation_average.csv", index=False)

@@ -1,4 +1,4 @@
-# Module purpose: Test market loading, chronological ordering, and lag construction.
+# Check that market data is sorted correctly and that lagged features use past rows.
 
 import tempfile
 import unittest
@@ -10,9 +10,9 @@ import pandas as pd
 from src.functional_pipeline import MODEL_FEATURES, load_market_data
 
 
-# Implement DataPipelineTests.
+# Keep the data-pipeline checks in one unittest class.
 class DataPipelineTests(unittest.TestCase):
-    # Test market loader builds expected chronological features.
+    # A small hand-made dataset makes the ordering and lag values easy to verify.
     def test_market_loader_builds_expected_chronological_features(self):
         n_rows = 2300
         index = pd.date_range("2022-01-01", periods=n_rows, freq="h", tz="UTC")

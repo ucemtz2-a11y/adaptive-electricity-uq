@@ -1,4 +1,4 @@
-# Module purpose: Generate paper figures, LaTeX results, and documentation from frozen summaries.
+# Turn the prepared summary tables into dissertation figures and short text files.
 
 """Figures and text outputs for the final paper summary."""
 
@@ -23,7 +23,7 @@ from src.final_summary_data import (
 )
 
 
-# Grouped bar.
+# Draw the repeated grouped-bar layout used by several comparison figures.
 def grouped_bar(
     data: pd.DataFrame,
     index: str,
@@ -57,7 +57,7 @@ def grouped_bar(
     plt.close()
 
 
-# Make figures.
+# Create the seven final figures from already prepared result tables.
 def make_figures(
     synthetic: pd.DataFrame,
     v10_results: pd.DataFrame,
@@ -68,10 +68,10 @@ def make_figures(
     unified_average: pd.DataFrame,
     figures_dir: Path,
 ) -> None:
-    # Generate and save figures for headline results and diagnostics.
+    # Make sure the destination exists before any plot is saved.
     figures_dir.mkdir(parents=True, exist_ok=True)
 
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # Keep the same method order in every figure so colours and positions are consistent.
     average = categorical_sort(unified_average, "method", METHOD_ORDER)
 
     plt.figure(figsize=(12, 5))
@@ -81,10 +81,11 @@ def make_figures(
     plt.title("Unified strong-baseline comparison")
     plt.xticks(rotation=30, ha="right")
     plt.tight_layout()
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Figure 1 gives the overall functional-error comparison across all markets.
     plt.savefig(figures_dir / "fig_1_unified_functional_error.png", dpi=240)
     plt.close()
 
+    # Figure 2 keeps market differences visible instead of averaging them away.
     market_methods = [
         "Raw quantile",
         "Scalar ACI",
@@ -108,6 +109,7 @@ def make_figures(
         method_order=market_methods,
     )
 
+    # Figure 3 puts the four controlled synthetic scenarios side by side.
     if (
         "scenario" in synthetic.columns and "functional_error_mean" in synthetic.columns
     ):
@@ -142,6 +144,7 @@ def make_figures(
 
     plt.figure(figsize=(11, 5))
 
+    # Figure 4 draws one line per method as perturbation strength increases.
     for method in CORE_METHODS:
         part = (
             perturbation[perturbation["method"] == method].sort_values("rho")
@@ -160,6 +163,7 @@ def make_figures(
     plt.savefig(figures_dir / "fig_4_perturbation_functional_error.png", dpi=240)
     plt.close()
 
+    # Figure 5 shows which removed context group changes functional error most.
     grouped_bar(
         context_ablation[
             context_ablation["method"].isin(
@@ -179,6 +183,7 @@ def make_figures(
         method_order=["Linear contextual ACI", "Hybrid Functional ACI"],
     )
 
+    # Figure 6 plots the direct hybrid-minus-linear gain for each market.
     hybrid_market = (
         v10_results[v10_results["method"] == "Hybrid Functional ACI"][
             ["market", "functional_error", "mean_abs_functional_component"]
@@ -223,6 +228,7 @@ def make_figures(
         plt.savefig(figures_dir / "fig_6_market_nonlinearity_gain.png", dpi=240)
         plt.close()
 
+    # Figure 7 shows the accuracy/runtime trade-off for random-feature settings.
     plt.figure(figsize=(9, 5))
     plt.scatter(
         kernel_ablation["runtime_seconds_mean"],
@@ -230,6 +236,7 @@ def make_figures(
         s=70,
     )
 
+    # Label each kernel point with its feature count to make the trade-off readable.
     for _, row in kernel_ablation.iterrows():
         plt.annotate(
             (
@@ -250,7 +257,7 @@ def make_figures(
     plt.close()
 
 
-# Write results section.
+# Fill a short LaTeX results section using values calculated from the tables.
 def write_results_section(
     path: Path,
     findings: dict,
@@ -348,11 +355,11 @@ complexity is genuinely nonlinear, while remaining close to the linear model
 where the nonlinear signal is weak.
 """
 
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # The text is generated so quoted percentages stay in sync with the CSV files.
     path.write_text(text.strip() + "\n", encoding="utf-8")
 
 
-# Write readme.
+# Add a small guide beside the generated v14 tables and figures.
 def write_readme(
     path: Path,
 ) -> None:

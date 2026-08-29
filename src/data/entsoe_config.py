@@ -1,4 +1,4 @@
-# Module purpose: Load shared ENTSO-E configuration and API credentials.
+# Read the small amount of shared setup needed by the ENTSO-E download scripts.
 
 """Shared configuration and credential helpers for ENTSO-E downloads."""
 
@@ -8,13 +8,13 @@ import yaml
 from dotenv import load_dotenv
 
 
-# Load config.
+# Read dates and other download settings from the project YAML file.
 def load_config(path="config/config.yaml"):
     with open(path, "r") as file:
         return yaml.safe_load(file)
 
 
-# Get API key.
+# Prefer the environment variable, but allow the YAML value for older local setups.
 def get_api_key(config):
     load_dotenv()
 

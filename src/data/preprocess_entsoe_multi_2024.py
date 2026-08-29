@@ -1,4 +1,4 @@
-# Module purpose: Convert multi-market 2024 ENTSO-E files into hourly modelling data.
+# Build the final hourly 2024 table for each electricity market.
 
 import sys
 from pathlib import Path
@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.protocol import ENTSOE_MARKETS
 
 
-# Read ENTSO-E CSV.
+# Separate a possible metadata row from the real timestamped observations.
 def read_entsoe_csv(path: Path) -> tuple[pd.DataFrame, pd.Series | None]:
     """
     Exact copy of the original preprocessing logic.
@@ -42,7 +42,7 @@ def read_entsoe_csv(path: Path) -> tuple[pd.DataFrame, pd.Series | None]:
     return raw, metadata
 
 
-# To hourly.
+# Average quarter-hourly values so every source has one row per hour.
 def to_hourly(df: pd.DataFrame) -> pd.DataFrame:
     """
     Convert quarter-hourly or hourly data to hourly frequency.
@@ -56,7 +56,7 @@ def to_hourly(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# Read single series.
+# Reduce the price or load download to one clearly named column.
 def read_single_series(path: Path, value_name: str) -> pd.DataFrame:
     """
     Read price or load series using the original pipeline.
@@ -74,7 +74,7 @@ def read_single_series(path: Path, value_name: str) -> pd.DataFrame:
     return out
 
 
-# Read generation.
+# Keep actual wind and solar generation and combine their matching columns.
 def read_generation(path: Path) -> pd.DataFrame:
     """
     Extract hourly wind and solar generation exactly as in the original code.
@@ -119,7 +119,7 @@ def read_generation(path: Path) -> pd.DataFrame:
     return out
 
 
-# Preprocess market.
+# Merge and clean one market without touching the historical processed files.
 def preprocess_market(market: str):
     """
     Exact 2024 extension of the original preprocessor.
@@ -149,6 +149,7 @@ def preprocess_market(market: str):
     load = read_single_series(load_path, "load")
     generation = read_generation(generation_path)
 
+    # Join before filtering so all available 2024 timestamps are considered.
     df = prices.join(load, how="outer").join(generation, how="outer")
     df = df.sort_index()
 
@@ -157,7 +158,7 @@ def preprocess_market(market: str):
 
     df = df.loc[(df.index >= start_utc) & (df.index < end_utc)].copy()
     
-    # Preserve the original column selection and missing-value rules exactly.
+    # Keep only calendar-year 2024, then apply the same forward-fill rule as historical data.
     df = df.ffill()
 
     for col in ["price", "load", "wind", "solar"]:
@@ -184,7 +185,7 @@ def preprocess_market(market: str):
     return out_path
 
 
-# Main.
+# Final-year processing is fail-fast because an incomplete market would invalidate the run.
 def main():
     for market in ENTSOE_MARKETS:
         try:

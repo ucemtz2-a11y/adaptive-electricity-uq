@@ -1,4 +1,4 @@
-# Module purpose: Implement scalar, linear, functional, and hybrid ACI calibrators.
+# Implement the four online calibration methods compared in the dissertation.
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import pandas as pd
 Array = np.ndarray
 
 
-# As 1d.
+# Convert input values to a clean one-dimensional floating-point array.
 def _as_1d(x: Array) -> Array:
     arr = np.asarray(x, dtype=float).reshape(-1)
 
@@ -22,7 +22,7 @@ def _as_1d(x: Array) -> Array:
     return arr
 
 
-# As 2d.
+# Convert context values to a clean two-dimensional feature matrix.
 def _as_2d(x: Array) -> Array:
     arr = np.asarray(x, dtype=float)
 
@@ -38,7 +38,7 @@ def _as_2d(x: Array) -> Array:
     return arr
 
 
-# Validate interval inputs.
+# Check the three interval arrays before starting an online run.
 def _validate_interval_inputs(
     lower_raw: Array,
     upper_raw: Array,
@@ -57,7 +57,7 @@ def _validate_interval_inputs(
     return lower, upper, y
 
 
-# Implement CenteredRandomFourierFeatures.
+# Approximate an RBF kernel and centre the features using training data only.
 class CenteredRandomFourierFeatures:
     """
     Centred Random Fourier Features for an RBF kernel.
@@ -69,7 +69,7 @@ class CenteredRandomFourierFeatures:
         psi(x) = phi(x) - mean_train(phi(x))
     """
 
-    # Init.
+    # Store the feature-map settings; random values are created later in fit().
     def __init__(
         self,
         n_components: int = 128,
@@ -91,7 +91,7 @@ class CenteredRandomFourierFeatures:
         self.feature_mean_: Optional[Array] = None
         self.n_features_in_: Optional[int] = None
 
-    # Raw transform.
+    # Apply the cosine map before subtracting the training-feature mean.
     def _raw_transform(self, x: Array) -> Array:
         x = _as_2d(x)
 
@@ -114,7 +114,7 @@ class CenteredRandomFourierFeatures:
             np.sqrt(2.0 / self.n_components) * np.cos(projection)
         )
 
-    # Fit.
+    # Draw the random map once and remember its mean on the training rows.
     def fit(
         self,
         x: Array,
@@ -142,19 +142,19 @@ class CenteredRandomFourierFeatures:
 
         return self
 
-    # Transform.
+    # Use the same random map and training mean for validation and test rows.
     def transform(self, x: Array) -> Array:
         if self.feature_mean_ is None:
             raise RuntimeError("CenteredRandomFourierFeatures must be fitted first.")
 
         return self._raw_transform(x) - self.feature_mean_
 
-    # Fit transform.
+    # Fit the map and return the transformed training rows in one call.
     def fit_transform(self, x: Array) -> Array:
         return self.fit(x).transform(x)
 
 
-# Implement ResidualizedRandomFourierFeatures.
+# Remove the linear part from random features so this map focuses on nonlinearity.
 class ResidualizedRandomFourierFeatures:
     """
     Nonlinear RFF features orthogonalised against the linear context.
@@ -171,7 +171,7 @@ class ResidualizedRandomFourierFeatures:
     deviation and then divided by sqrt(D), keeping its overall norm stable.
     """
 
-    # Init.
+    # Set up the centred base map and the ridge projection used during fitting.
     def __init__(
         self,
         n_components: int = 128,
@@ -197,7 +197,7 @@ class ResidualizedRandomFourierFeatures:
         self.residual_scale_: Optional[Array] = None
         self.n_features_in_: Optional[int] = None
 
-    # Fit.
+    # Learn how much of each random feature can already be explained linearly.
     def fit(
         self,
         x: Array,
@@ -223,7 +223,7 @@ class ResidualizedRandomFourierFeatures:
 
         return self
 
-    # Transform.
+    # Return only the scaled nonlinear residual left after the linear projection.
     def transform(self, x: Array) -> Array:
         x = _as_2d(x)
 
@@ -250,12 +250,12 @@ class ResidualizedRandomFourierFeatures:
 
         return normalised / np.sqrt(self.n_components)
 
-    # Fit transform.
+    # Fit the residual map and transform the same training matrix.
     def fit_transform(self, x: Array) -> Array:
         return self.fit(x).transform(x)
 
 
-# Store online calibration trajectories and provide tabular export.
+# Keep every part of an online calibration path together for evaluation and saving.
 @dataclass
 class OnlineCalibrationResult:
     lower: Array
@@ -268,7 +268,7 @@ class OnlineCalibrationResult:
     linear_component: Array
     functional_component: Array
 
-    # To frame.
+    # Convert the main one-dimensional outputs to a table for CSV files.
     def to_frame(
         self,
         index: Optional[pd.Index] = None,
@@ -288,11 +288,11 @@ class OnlineCalibrationResult:
         )
 
 
-# Implement ScalarACI.
+# Scalar ACI learns one global amount to add to both sides of every interval.
 class ScalarACI:
     """Scalar online interval-widening baseline."""
 
-    # Init.
+    # Save the learning rate, target error rate, and allowed adjustment range.
     def __init__(
         self,
         alpha: float = 0.10,
@@ -316,11 +316,11 @@ class ScalarACI:
 
         self.adjustment_ = self.initial_adjustment
 
-    # Reset.
+    # Return the online state to the value used at the start of a fresh path.
     def reset(self) -> None:
         self.adjustment_ = self.initial_adjustment
 
-    # Run.
+    # Replay the observations in order and update one scalar after each outcome.
     def run(
         self,
         lower_raw: Array,
@@ -348,6 +348,7 @@ class ScalarACI:
         global_component = np.empty(n)
 
         for t in range(n):
+            # First form the interval from the old state, then observe whether it missed.
             q_t = float(np.clip(self.adjustment_, 0.0, self.max_adjustment))
 
             lower[t] = lower_raw[t] - q_t
@@ -359,6 +360,7 @@ class ScalarACI:
             miscoverage[t] = miss_t
             global_component[t] = q_t
 
+            # Only future intervals can use the update based on miss_t.
             self.adjustment_ = float(
                 np.clip(
                     self.adjustment_ + self.eta * (miss_t - self.alpha),
@@ -384,7 +386,7 @@ class ScalarACI:
         )
 
 
-# Implement LinearContextualACI.
+# Linear contextual ACI lets the adjustment change with the current context vector.
 class LinearContextualACI:
     """
     Linear contextual ACI.
@@ -392,7 +394,7 @@ class LinearContextualACI:
         q_t = clip(b_t + beta_t^T z_t, 0, B)
     """
 
-    # Init.
+    # Store separate learning rates for the global and context-dependent parts.
     def __init__(
         self,
         alpha: float = 0.10,
@@ -421,19 +423,19 @@ class LinearContextualACI:
         self.intercept_ = self.initial_intercept
         self.linear_weights_: Optional[Array] = None
 
-    # Reset.
+    # Start a new online path with zero context weights.
     def reset(self, n_features: int) -> None:
         self.intercept_ = self.initial_intercept
         self.linear_weights_ = np.zeros(n_features)
 
-    # Project linear.
+    # Keep the linear weights inside the chosen radius to avoid unbounded updates.
     def _project_linear(self) -> None:
         norm = float(np.linalg.norm(self.linear_weights_))
 
         if norm > self.linear_radius:
             self.linear_weights_ *= self.linear_radius / norm
 
-    # Run.
+    # Make and update contextual intervals one time step at a time.
     def run(
         self,
         lower_raw: Array,
@@ -462,13 +464,14 @@ class LinearContextualACI:
         lower = np.empty(n)
         upper = np.empty(n)
         adjustment = np.empty(n)
-        # Compute coverage, interval-efficiency, and conditional-coverage metrics.
+        # Save the full path so the same predictions can be used by every metric.
         miscoverage = np.empty(n, dtype=int)
         state_norm = np.empty(n)
         global_component = np.empty(n)
         linear_component = np.empty(n)
 
         for t in range(n):
+            # Prediction uses weights learned from earlier rows only.
             linear_t = float(self.linear_weights_ @ context[t])
 
             q_t = float(np.clip(self.intercept_ + linear_t, 0.0, self.max_adjustment))
@@ -485,6 +488,7 @@ class LinearContextualACI:
 
             error = float(miss_t - self.alpha)
 
+            # Learn from this outcome only after its interval and error are stored.
             self.intercept_ = float(
                 np.clip(
                     self.intercept_ + self.eta_global * error,
@@ -516,7 +520,7 @@ class LinearContextualACI:
         )
 
 
-# Implement FunctionalACI.
+# Functional ACI uses nonlinear random features instead of a linear context term.
 class FunctionalACI:
     """
     Pure nonlinear Functional ACI using centred RFF.
@@ -524,7 +528,7 @@ class FunctionalACI:
         q_t = clip(b_t + w_t^T psi(z_t), 0, B)
     """
 
-    # Init.
+    # Build the random-feature map and store the two online learning rates.
     def __init__(
         self,
         alpha: float = 0.10,
@@ -553,12 +557,12 @@ class FunctionalACI:
         self.intercept_ = self.initial_intercept
         self.functional_weights_: Optional[Array] = None
 
-    # Return the nonlinear random-feature dimension.
+    # Expose the random-feature dimension used to size the online state.
     @property
     def n_components(self) -> int:
         return self.feature_map.n_components
 
-    # Fit feature map.
+    # Fit random features on training context only, before online evaluation begins.
     def fit_feature_map(
         self,
         train_context: Array,
@@ -567,16 +571,16 @@ class FunctionalACI:
         self.reset()
         return self
 
-    # Reset.
+    # Reset the intercept and all nonlinear weights for a fresh path.
     def reset(self) -> None:
         self.intercept_ = self.initial_intercept
         self.functional_weights_ = np.zeros(self.n_components)
 
-    # Transform context.
+    # Apply the already fitted training feature map to new context rows.
     def transform_context(self, context: Array) -> Array:
         return self.feature_map.transform(context)
 
-    # Project functional.
+    # Keep nonlinear weights inside their fixed radius after every update.
     def _project_functional(self) -> None:
         norm = float(np.linalg.norm(self.functional_weights_))
 
@@ -585,7 +589,7 @@ class FunctionalACI:
                 self.functional_radius / norm
             )
 
-    # Run.
+    # Replay a sequence using the nonlinear adjustment learned so far.
     def run(
         self,
         lower_raw: Array,
@@ -615,13 +619,14 @@ class FunctionalACI:
         lower = np.empty(n)
         upper = np.empty(n)
         adjustment = np.empty(n)
-        # Compute coverage, interval-efficiency, and conditional-coverage metrics.
+        # Keep each part of the path for later coverage and component analysis.
         miscoverage = np.empty(n, dtype=int)
         state_norm = np.empty(n)
         global_component = np.empty(n)
         functional_component = np.empty(n)
 
         for t in range(n):
+            # The current interval uses only the nonlinear weights from earlier rows.
             functional_t = float(self.functional_weights_ @ psi[t])
 
             q_t = float(
@@ -640,6 +645,7 @@ class FunctionalACI:
 
             error = float(miss_t - self.alpha)
 
+            # Update the state after recording whether the current interval missed.
             self.intercept_ = float(
                 np.clip(
                     self.intercept_ + self.eta_global * error,
@@ -673,7 +679,7 @@ class FunctionalACI:
         )
 
 
-# Implement HybridFunctionalACI.
+# HF-ACI combines a readable linear term with a separate nonlinear residual term.
 class HybridFunctionalACI:
     """
     Hybrid Functional ACI.
@@ -690,7 +696,7 @@ class HybridFunctionalACI:
     so the kernel component focuses on nonlinear residual structure.
     """
 
-    # Init.
+    # Store the three learning rates and create the residual random-feature map.
     def __init__(
         self,
         alpha: float = 0.10,
@@ -728,12 +734,12 @@ class HybridFunctionalACI:
         self.functional_weights_: Optional[Array] = None
         self.n_context_features_: Optional[int] = None
 
-    # Return the nonlinear random-feature dimension.
+    # Expose the number of nonlinear weights needed by the online state.
     @property
     def n_components(self) -> int:
         return self.feature_map.n_components
 
-    # Fit feature map.
+    # Fit the nonlinear residual map on training context and initialise both states.
     def fit_feature_map(
         self,
         train_context: Array,
@@ -746,7 +752,7 @@ class HybridFunctionalACI:
 
         return self
 
-    # Reset.
+    # Start a fresh path with zero linear and nonlinear weights.
     def reset(self) -> None:
         if self.n_context_features_ is None:
             raise RuntimeError("Call fit_feature_map first.")
@@ -755,18 +761,18 @@ class HybridFunctionalACI:
         self.linear_weights_ = np.zeros(self.n_context_features_)
         self.functional_weights_ = np.zeros(self.n_components)
 
-    # Transform context.
+    # Convert new context rows using the residual map fitted on training data.
     def transform_context(self, context: Array) -> Array:
         return self.feature_map.transform(context)
 
-    # Project linear.
+    # Keep the linear part inside its chosen weight radius.
     def _project_linear(self) -> None:
         norm = float(np.linalg.norm(self.linear_weights_))
 
         if norm > self.linear_radius:
             self.linear_weights_ *= self.linear_radius / norm
 
-    # Project functional.
+    # Keep the nonlinear part inside its own weight radius.
     def _project_functional(self) -> None:
         norm = float(np.linalg.norm(self.functional_weights_))
 
@@ -775,7 +781,7 @@ class HybridFunctionalACI:
                 self.functional_radius / norm
             )
 
-    # Run.
+    # Replay the hybrid adjustment in time order without looking ahead.
     def run(
         self,
         lower_raw: Array,
@@ -808,7 +814,7 @@ class HybridFunctionalACI:
         lower = np.empty(n)
         upper = np.empty(n)
         adjustment = np.empty(n)
-        # Compute coverage, interval-efficiency, and conditional-coverage metrics.
+        # Store the separate components so their contribution can be inspected later.
         miscoverage = np.empty(n, dtype=int)
         state_norm = np.empty(n)
 
@@ -817,6 +823,7 @@ class HybridFunctionalACI:
         functional_component = np.empty(n)
 
         for t in range(n):
+            # Both components use states learned only from earlier outcomes.
             linear_t = float(self.linear_weights_ @ context[t])
 
             functional_t = float(self.functional_weights_ @ psi[t])
@@ -843,6 +850,7 @@ class HybridFunctionalACI:
 
             error = float(miss_t - self.alpha)
 
+            # The current outcome updates all three states for the next prediction.
             self.intercept_ = float(
                 np.clip(
                     self.intercept_ + self.eta_global * error,

@@ -1,4 +1,4 @@
-# Module purpose: Download untouched 2024 ENTSO-E data for multiple markets.
+# Download the separate 2024 files used only for the final evaluation.
 
 import sys
 from pathlib import Path
@@ -14,7 +14,7 @@ from src.data.entsoe_config import get_api_key, load_config
 from src.protocol import ENTSOE_MARKETS
 
 
-# Safe download.
+# Stop immediately if a final-year file cannot be downloaded completely.
 def safe_download(name, query_func, out_path):
     try:
         print(f"Downloading {name}...")
@@ -26,7 +26,7 @@ def safe_download(name, query_func, out_path):
         raise
 
 
-# Main.
+# Use fixed 2024 UTC dates so the final dataset cannot drift with the YAML settings.
 def main():
     """
     Exact extension of the original multi-market ENTSO-E downloader.
@@ -49,6 +49,7 @@ def main():
     raw_dir = Path("data/raw/entsoe_multi_2024")
     raw_dir.mkdir(parents=True, exist_ok=True)
 
+    # Keep 2024 in a separate folder to protect the already checked historical data.
     for market in ENTSOE_MARKETS:
         print("\n" + "=" * 60)
         print(f"Market: {market}")

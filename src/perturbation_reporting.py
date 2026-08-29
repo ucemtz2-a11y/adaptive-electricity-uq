@@ -1,4 +1,4 @@
-# Module purpose: Generate perturbation diagnostics from standardized summary tables.
+# Draw the six simple line charts used to explain the perturbation experiment.
 
 """Plotting-only helpers for stochastic-feature perturbation experiments."""
 
@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
-# Plot metric.
+# Plot one metric against rho with one line and confidence band per method.
 def plot_metric(
     table: pd.DataFrame,
     metric: str,
@@ -30,6 +30,7 @@ def plot_metric(
 
         plt.plot(part["rho"], part[f"{metric}_mean"], marker="o", label=method_name)
 
+        # The shaded area is the mean plus or minus 1.96 standard errors.
         lower = (
             part[f"{metric}_mean"] - 1.96 * part[f"{metric}_se"].fillna(0.0)
         )
@@ -49,7 +50,7 @@ def plot_metric(
     plt.close()
 
 
-# Make figures.
+# Reuse the same readable plot layout for each reported metric.
 def make_figures(
     cross_market_summary: pd.DataFrame,
     figures_dir: Path,

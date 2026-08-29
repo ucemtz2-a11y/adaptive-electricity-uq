@@ -1,4 +1,4 @@
-# Module purpose: Define the frozen development protocol shared by real-market experiments.
+# Keep the market names, seeds, and main experiment settings in one place.
 
 """Shared defaults for the real-market development and final protocols."""
 
@@ -10,7 +10,7 @@ ENTSOE_MARKETS = ("DK_1", "DK_2", "SE_3", "DE_LU")
 MARKET_NAME_MAP = {"DE_LU": "DE-LU", "DK_1": "DK1", "DK_2": "DK2", "SE_3": "SE3"}
 
 
-# Store defaults shared by real-market experiments without overriding synthetic or theory settings.
+# These defaults are shared by the real-market runs only; the simulations use their own settings.
 @dataclass(frozen=True)
 class DevelopmentProtocol:
     alpha: float = 0.10
@@ -23,6 +23,6 @@ class DevelopmentProtocol:
 DEVELOPMENT_PROTOCOL = DevelopmentProtocol()
 
 
-# Derive the stable market-specific seed used throughout the paper experiments.
+# Turn each market name into the same seed offset every time the experiment is run.
 def market_random_state(market: str, base_seed: int) -> int:
     return int(base_seed + sum(ord(character) for character in market))

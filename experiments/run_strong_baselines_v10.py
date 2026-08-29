@@ -1,4 +1,4 @@
-# Module purpose: Reproduce frozen v10 predictions and add standardized strong baselines.
+# Compare the main v10 methods with three stronger baseline approaches.
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ from src.functional_pipeline import (  # noqa: E402
 )
 from src.evaluation.metrics import evaluate  # noqa: E402
 
-# Reuse the exact v6 strong-baseline definitions to avoid version drift.
+# Import the shared baseline formulas so this script does not keep a second copy.
 from src.calibration.baselines import (  # noqa: E402
     adaptive_conformal_score_interval,
     rolling_historical_interval,
@@ -54,7 +54,7 @@ from src.protocol import (  # noqa: E402
 )
 
 
-# Parse args.
+# Read the data, frozen v10 folder, markets, and shared experiment settings.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -107,7 +107,7 @@ def parse_args() -> argparse.Namespace:
 
 
 
-# Evaluate baseline.
+# Convert one baseline interval path to the same metrics used by the ACI methods.
 def evaluate_baseline(
     market: str,
     method_name: str,
@@ -142,7 +142,7 @@ def evaluate_baseline(
     return metrics, result
 
 
-# Run one market.
+# Reproduce raw predictions and evaluate all three baselines for one market.
 def run_one_market(
     market_prefix: str,
     args: argparse.Namespace,
@@ -154,14 +154,14 @@ def run_one_market(
     print("\n" + "=" * 90)
     print(f"Unified strong baselines: {market}")
 
-    # Load inputs or existing results and normalize them for downstream processing.
+    # Load the same processed observations that were used by v10.
     (
         df,
         target_col,
         model_features,
     ) = load_market_data(market_prefix, args.data_dir)
 
-    # Split chronologically into explicit training, validation, and test periods.
+    # Reuse the original time split so baseline comparisons use identical test rows.
     (
         train_slice,
         validation_slice,
@@ -170,7 +170,7 @@ def run_one_market(
 
     market_seed = market_random_state(market_prefix, args.random_state)
 
-    # Reproduce the v10 raw quantile models under frozen settings.
+    # Regenerate v10 raw intervals before calculating any new baseline result.
     predictions = make_raw_predictions(
         df=df,
         target_col=target_col,
@@ -180,7 +180,7 @@ def run_one_market(
         random_state=market_seed,
     )
 
-    # Train base quantile models and generate uncalibrated prediction intervals.
+    # Fit the lower, median, and upper models on training data only.
     stored_v10 = load_v10_test_predictions(args.v10_results, market_prefix)
 
     match_diagnostics = (
@@ -192,7 +192,7 @@ def run_one_market(
         )
     )
 
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Stop if these raw intervals do not match the saved v10 predictions exactly.
     (
         diagnostics_dir / f"{market_prefix}_raw_match.json"
     ).write_text(
@@ -202,7 +202,7 @@ def run_one_market(
 
     print("Verified exact v10 raw-interval match.")
 
-    # Build and scale context features for conditional calibration.
+    # Build the same context used to evaluate conditional coverage in v10.
     context = build_context(predictions)
 
     context_scaled = preprocess_context(context, train_slice)
@@ -213,7 +213,7 @@ def run_one_market(
 
     test_index = predictions.index[test_slice]
 
-    # Build the functional-error map and conditional groups for common evaluation.
+    # All baselines share one evaluation map and the same market groups.
     evaluation_feature_map = fit_evaluation_map(train_context, market_seed + 10_000)
 
     evaluation_map_test = (
@@ -250,7 +250,7 @@ def run_one_market(
         "upper_raw": upper_test.to_numpy(),
     }
 
-    # 1. Rolling historical quantiles use only realized prices.
+    # Baseline 1 uses only prices observed before each test hour.
     lower_roll, upper_roll = (
         rolling_historical_interval(
             y=df[target_col],
@@ -260,7 +260,7 @@ def run_one_market(
         )
     )
 
-    # Compute coverage, interval-efficiency, and conditional-coverage metrics.
+    # Evaluate rolling intervals with the same coverage and width measures as v10.
     rolling_metrics, _ = evaluate_baseline(
         market=market,
         method_name=(
@@ -288,7 +288,7 @@ def run_one_market(
         "upper_rolling_historical"
     ] = np.asarray(upper_roll, dtype=float)
 
-    # 2. Split CQR.
+    # Baseline 2 learns one CQR expansion from the validation period.
     (
         lower_cqr,
         upper_cqr,
@@ -328,7 +328,7 @@ def run_one_market(
         "upper_split_cqr"
     ] = np.asarray(upper_cqr, dtype=float)
 
-    # 3. Adaptive conformal scores update online from observed feedback.
+    # Baseline 3 updates its score threshold after each observed test outcome.
     eta_aci = (
         theta_max / (10.0 * np.sqrt(len(y_test)))
     )
@@ -415,7 +415,7 @@ def run_one_market(
     return result_table, prediction_table
 
 
-# Append v10 methods.
+# Add the saved v10 methods so every method appears in one comparison table.
 def append_v10_methods(
     strong_results: pd.DataFrame,
     v10_results: Path,
@@ -454,7 +454,7 @@ def append_v10_methods(
     return pd.concat([v10, strong], ignore_index=True)
 
 
-# Make average summary.
+# Average the unified results across the four markets.
 def make_average_summary(
     results: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -478,7 +478,7 @@ def make_average_summary(
     )
 
 
-# Make pairwise hybrid comparison.
+# Subtract each baseline metric from HF-ACI market by market.
 def make_pairwise_hybrid_comparison(
     results: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -534,7 +534,7 @@ def make_pairwise_hybrid_comparison(
     return merged
 
 
-# Make figures.
+# Draw one grouped market chart for each main evaluation metric.
 def make_figures(
     results: pd.DataFrame,
     figures_dir: Path,
@@ -576,16 +576,15 @@ def make_figures(
         plt.close()
 
 
-# Main.
+# Run all markets, combine new baselines with v10, and save the comparison.
 def main() -> None:
     args = parse_args()
 
-    # Read runtime arguments and prepare experiment output directories.
+    # Create separate folders for tables, figures, and reproduction checks.
     tables_dir = (
         args.output / "tables"
     )
 
-    # Generate and save figures for headline results and diagnostics.
     figures_dir = (
         args.output / "figures"
     )
@@ -614,7 +613,7 @@ def main() -> None:
 
     strong_results = pd.concat(all_strong_results, ignore_index=True)
 
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Save new baseline rows before joining them with the frozen v10 methods.
     strong_results.to_csv(
         tables_dir / "unified_strong_baseline_results.csv",
         index=False,
@@ -627,7 +626,7 @@ def main() -> None:
 
     all_results.to_csv(tables_dir / "unified_all_method_results.csv", index=False)
 
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # Average only after all methods have been placed on the same market rows.
     average_summary = make_average_summary(all_results)
 
     average_summary.to_csv(tables_dir / "unified_all_method_average.csv", index=False)

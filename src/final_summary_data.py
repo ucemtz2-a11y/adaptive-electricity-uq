@@ -1,4 +1,4 @@
-# Module purpose: Load, standardize, and aggregate experiment results and headline findings.
+# Prepare the saved experiment tables used in the final dissertation summary.
 
 """Data preparation and headline findings for the final paper summary."""
 
@@ -45,19 +45,19 @@ SYNTHETIC_METHODS = [
 SCENARIO_ORDER = ["linear", "nonlinear", "abrupt_drift", "gradual_stochastic"]
 
 
-# Require file.
+# Give a clear error when one of the earlier experiment files is missing.
 def require_file(path: Path) -> Path:
     if not path.exists():
         raise FileNotFoundError(f"Required result file not found:\n{path}")
     return path
 
 
-# Read CSV.
+# Read a required CSV after checking that it exists.
 def read_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(require_file(path))
 
 
-# Ensure coverage error.
+# Add coverage error when an older table contains coverage but not the gap itself.
 def ensure_coverage_error(
     df: pd.DataFrame,
     alpha: float,
@@ -78,7 +78,7 @@ def ensure_coverage_error(
     return df
 
 
-# Prepare table.
+# Apply the small amount of shared cleanup needed by final tables.
 def prepare_table(
     df: pd.DataFrame,
     alpha: float,
@@ -86,7 +86,7 @@ def prepare_table(
     return ensure_coverage_error(df, alpha)
 
 
-# Find column.
+# Accept the few column names used by different saved synthetic result versions.
 def find_column(
     columns: Iterable[str],
     candidates: Iterable[str],
@@ -100,7 +100,7 @@ def find_column(
     return None
 
 
-# Derive synthetic summary.
+# Recalculate synthetic means and standard errors from the saved seed-level rows.
 def derive_synthetic_summary(
     v9: Path,
     alpha: float,
@@ -139,6 +139,7 @@ def derive_synthetic_summary(
         if column in seed_results.columns
     ]
 
+    # Grouping by scenario and method keeps every seed as one repeated experiment.
     grouped = (
         seed_results.groupby(["scenario", "method"])[metrics]
         .agg(["mean", "std", "count"])
@@ -156,7 +157,7 @@ def derive_synthetic_summary(
     return summary
 
 
-# Select columns.
+# Keep requested columns that are actually available in the source table.
 def select_columns(
     df: pd.DataFrame,
     columns: list[str],
@@ -164,7 +165,7 @@ def select_columns(
     return df[[column for column in columns if column in df.columns]].copy()
 
 
-# Categorical sort.
+# Use the dissertation's method order instead of alphabetical order.
 def categorical_sort(
     df: pd.DataFrame,
     column: str,
@@ -179,7 +180,7 @@ def categorical_sort(
     return df
 
 
-# Save table.
+# Write one prepared table as both CSV and a matching LaTeX table.
 def save_table(
     df: pd.DataFrame,
     csv_path: Path,
@@ -200,7 +201,7 @@ def save_table(
     tex_path.write_text(tex, encoding="utf-8")
 
 
-# Get value.
+# Look up one method/metric value while returning NaN for a missing row.
 def get_value(
     table: pd.DataFrame,
     method: str,
@@ -214,7 +215,7 @@ def get_value(
     return float(part.iloc[0][metric])
 
 
-# Reduction percent.
+# Express how much smaller a new value is than its reference value.
 def reduction_percent(
     baseline: float,
     improved: float,
@@ -227,7 +228,7 @@ def reduction_percent(
     )
 
 
-# Derive headline findings.
+# Calculate the comparisons quoted in the final results section from saved numbers.
 def derive_headline_findings(
     synthetic: pd.DataFrame,
     v10_results: pd.DataFrame,
@@ -238,7 +239,7 @@ def derive_headline_findings(
     rows = []
     payload: dict = {}
 
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # Start with the main cross-market comparison between hybrid and baseline methods.
     hybrid_fe = get_value(
         unified_average,
         "Hybrid Functional ACI",
@@ -269,7 +270,7 @@ def derive_headline_findings(
     hybrid_winkler = get_value(unified_average, "Hybrid Functional ACI", "winkler_mean")
     aci_winkler = get_value(unified_average, "Adaptive conformal score", "winkler_mean")
 
-    # Compute coverage, interval-efficiency, and conditional-coverage metrics.
+    # Keep related numbers together so the reporting code can use simple keys.
     unified_payload = {
         "hybrid_functional_error": hybrid_fe,
         "linear_functional_error": linear_fe,
@@ -328,6 +329,7 @@ def derive_headline_findings(
         ]
     )
 
+    # Compare hybrid and linear methods market by market to show where nonlinearity helps.
     hybrid_market = (
         v10_results[v10_results["method"] == "Hybrid Functional ACI"][
             ["market", "functional_error", "mean_abs_functional_component"]
@@ -359,6 +361,7 @@ def derive_headline_findings(
             ascending=False,
         ).iloc[0]
 
+        # This small correlation is descriptive only; it is not used for model selection.
         correlation = (
             market_gain[["mean_abs_functional_component", "hybrid_gain"]].corr()
             .iloc[0, 1]
@@ -384,6 +387,7 @@ def derive_headline_findings(
             }
         )
 
+    # Compare the clean path with the strongest saved perturbation for each method.
     if not perturbation.empty:
         maximum_rho = float(perturbation["rho"].max())
 
@@ -427,6 +431,7 @@ def derive_headline_findings(
             ),
         }
 
+    # Measure the effect of removing past miscoverage from the context vector.
     context_changes = {}
 
     for method in ["Hybrid Functional ACI", "Linear contextual ACI"]:
@@ -472,6 +477,7 @@ def derive_headline_findings(
         )
     }
 
+    # Finish with the nonlinear synthetic scenario where hybrid structure is most relevant.
     if (
         "scenario" in synthetic.columns and "functional_error_mean" in synthetic.columns
     ):

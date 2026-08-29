@@ -1,4 +1,4 @@
-# Module purpose: Implement perturbations, prediction replay, and degradation summaries.
+# Hold the calculation steps used by the stochastic-feature perturbation experiment.
 
 """Computation-only helpers for stochastic-feature perturbation experiments."""
 
@@ -25,7 +25,7 @@ PERTURBED_FEATURES = [
 PRIMITIVE_FEATURES = ["load_lag_24", "wind_lag_24", "solar_lag_24"]
 
 
-# Load selected parameters.
+# Reuse the hyperparameters selected before any perturbation experiment was run.
 def load_selected_parameters(
     v10_results: Path,
     market_prefix: str,
@@ -44,7 +44,7 @@ def load_selected_parameters(
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-# Fit base models.
+# Fit the same lower, median, and upper quantile models used in the clean pipeline.
 def fit_base_models(
     df: pd.DataFrame,
     target_col: str,
@@ -80,7 +80,7 @@ def fit_base_models(
     return lower_model, median_model, upper_model
 
 
-# Make clean predictions.
+# Generate the unchanged prediction path that every noisy run starts from.
 def make_clean_predictions(
     df: pd.DataFrame,
     target_col: str,
@@ -117,7 +117,7 @@ def make_clean_predictions(
     return predictions
 
 
-# Draw noise.
+# Draw unit-variance Gaussian or uniform noise from the supplied random generator.
 def draw_noise(
     rng: np.random.Generator,
     shape: tuple[int, ...],
@@ -135,7 +135,7 @@ def draw_noise(
     return rng.uniform(low=-np.sqrt(3.0), high=np.sqrt(3.0), size=shape)
 
 
-# Perturb test features.
+# Add scaled noise to test features and report how large the actual change was.
 def perturb_test_features(
     x_test: pd.DataFrame,
     train_std: pd.Series,
@@ -164,9 +164,10 @@ def perturb_test_features(
                 x_test[column].to_numpy() + rho * scale * epsilon[:, column_index]
             )
 
-            # Enforce nonnegative physical bounds for load, wind, and solar generation.
+            # Electricity load and generation cannot be negative after adding noise.
             perturbed[column] = np.maximum(perturbed[column].to_numpy(), 0.0)
 
+        # In coherent mode residual load must still equal load minus wind and solar.
         perturbed[
             "residual_load_lag_24"
         ] = (
@@ -211,6 +212,7 @@ def perturb_test_features(
         dtype=float,
     )
 
+    # Standardising by training variability makes perturbation sizes comparable by feature.
     standardized_delta = delta / scales[None, :]
 
     standardized_l2 = np.linalg.norm(standardized_delta, axis=1)
@@ -229,7 +231,7 @@ def perturb_test_features(
     return perturbed, diagnostics
 
 
-# Replace test predictions.
+# Recompute only the test predictions while leaving training and validation unchanged.
 def replace_test_predictions(
     clean_predictions: pd.DataFrame,
     test_slice: slice,
@@ -269,7 +271,7 @@ def replace_test_predictions(
     return predictions
 
 
-# Evaluate perturbed path.
+# Replay all calibrated methods on one perturbed test path and calculate their metrics.
 def evaluate_perturbed_path(
     market: str,
     selected: dict,
@@ -304,6 +306,7 @@ def evaluate_perturbed_path(
         y_test=y_test,
     )
 
+    # Include the raw quantile model so calibration can be compared with no online update.
     method_results = {
         "Raw quantile": make_raw_result(raw_test_predictions),
         **calibrated_results,
@@ -327,7 +330,7 @@ def evaluate_perturbed_path(
     return rows
 
 
-# Summarise seed results.
+# Average repeated noise seeds for each market, rho value, and method.
 def summarise_seed_results(
     seed_results: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -367,7 +370,7 @@ def summarise_seed_results(
     return summary.sort_values(["market", "rho", "method"])
 
 
-# Compute degradation.
+# Compare every noisy run with the rho=0 run that used the same market and seed.
 def compute_degradation(
     seed_results: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -379,6 +382,7 @@ def compute_degradation(
         "worst_group_error",
     ]
 
+    # Matching on seed removes random-noise variation from the degradation difference.
     baseline = (
         seed_results[seed_results["rho"] == 0.0][["market", "seed", "method", *metrics]]
         .rename(
@@ -408,7 +412,7 @@ def compute_degradation(
     return merged[columns]
 
 
-# Aggregate degradation.
+# Summarise the seed-level changes for plotting and final tables.
 def aggregate_degradation(
     degradation: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -430,7 +434,7 @@ def aggregate_degradation(
     return grouped.reset_index()
 
 
-# Make cross market summary.
+# Average within each market first, then give all four markets equal weight.
 def make_cross_market_summary(
     seed_results: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -443,6 +447,7 @@ def make_cross_market_summary(
         "worst_group_error",
     ]
 
+    # This prevents a market with more rows or seeds from dominating the final mean.
     market_seed_means = (
         seed_results.groupby(["market", "rho", "method"])[metrics].mean().reset_index()
     )

@@ -1,4 +1,4 @@
-# Module purpose: Implement random features, oracle paths, and online regret for theory-alignment experiments.
+# Build the simulated oracle paths and regret values used to check the theory.
 
 """Mathematical core of the theory-alignment experiment."""
 
@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 
-# Build residualized random Fourier features for nonlinear conditional quantiles.
+# Create nonlinear features after removing the part already explained by linear context.
 @dataclass
 class ResidualRFFMap:
     omega: np.ndarray
@@ -19,14 +19,14 @@ class ResidualRFFMap:
     rff_mean: np.ndarray
     residual_coef: np.ndarray
 
-    # Raw RFF.
+    # Apply the original random Fourier map before the linear projection is removed.
     def raw_rff(self, z: np.ndarray) -> np.ndarray:
         d_features = self.omega.shape[1]
         return (
             np.sqrt(2.0 / d_features) * np.cos(z @ self.omega + self.phase)
         )
 
-    # Transform.
+    # Transform new rows with the map and projection learned from training context.
     def transform(self, z: np.ndarray) -> np.ndarray:
         rff_centered = (
             self.raw_rff(z) - self.rff_mean
@@ -41,7 +41,7 @@ class ResidualRFFMap:
         return np.column_stack([np.ones(len(z)), z, residual])
 
 
-# Project L2 ball.
+# Keep a parameter vector inside a fixed Euclidean-radius constraint.
 def project_l2_ball(
     u: np.ndarray,
     radius: float,
@@ -56,7 +56,7 @@ def project_l2_ball(
     )
 
 
-# Pinball loss.
+# Calculate quantile loss for a vector of predictions and targets.
 def pinball_loss(
     residual: float | np.ndarray,
     tau: float,
@@ -66,7 +66,7 @@ def pinball_loss(
     return np.where(residual >= 0.0, tau * residual, (tau - 1.0) * residual)
 
 
-# Uniform cdf.
+# Evaluate the simple uniform CDF used by the known simulation noise.
 def uniform_cdf(
     x: np.ndarray,
     low: float = -0.9,
@@ -75,7 +75,7 @@ def uniform_cdf(
     return np.clip((x - low) / (high - low), 0.0, 1.0)
 
 
-# Generate context.
+# Generate correlated context variables for one simulated time series.
 def generate_context(
     t_horizon: int,
     context_dim: int,
@@ -97,7 +97,7 @@ def generate_context(
     return z
 
 
-# Fit residual RFF.
+# Fit the random nonlinear basis using only the supplied training context.
 def fit_residual_rff(
     z_train: np.ndarray,
     n_components: int,
@@ -147,7 +147,7 @@ def fit_residual_rff(
     )
 
 
-# Make oracle path.
+# Create the changing ideal quantile function that the online learner follows.
 def make_oracle_path(
     phi_clean: np.ndarray,
     drift_intensity: float,
@@ -161,7 +161,7 @@ def make_oracle_path(
 
     u_base[0] = 1.85
 
-    # Linear main effects define the interpretable base of the oracle path.
+    # Linear effects form the easy-to-read base of the simulated oracle.
     linear_end = min(5, feature_dim)
 
     linear_pattern = np.array([0.15, -0.11, 0.08, 0.06], dtype=float)
@@ -170,7 +170,7 @@ def make_oracle_path(
         1:linear_end
     ] = linear_pattern[: linear_end - 1]
 
-    # Sparse nonlinear residuals test the additional capacity of functional methods.
+    # A few nonlinear effects test whether the functional component adds useful capacity.
     nonlinear_start = linear_end
 
     nonlinear_pattern = np.array([0.18, -0.15, 0.12, -0.10, 0.08, -0.06], dtype=float)
@@ -187,7 +187,7 @@ def make_oracle_path(
 
     direction_jump = rng.normal(size=feature_dim)
 
-    # Limit intercept drift so the oracle expansion q* remains positive.
+    # Limit intercept drift so the ideal interval expansion stays positive.
     direction_smooth[0] *= 0.10
     direction_jump[0] *= 0.10
 
@@ -220,7 +220,7 @@ def make_oracle_path(
 
     q_star = np.einsum("td,td->t", u_star, phi_clean)
 
-    # Keep scores positive under bounded noise, as required by interval expansion.
+    # Keep scores positive because they represent an amount added to interval width.
     minimum_required = 1.05
 
     if q_star.min() < minimum_required:
@@ -235,7 +235,7 @@ def make_oracle_path(
     return u_star, q_star
 
 
-# Path variation.
+# Measure how much the oracle parameters move from one step to the next.
 def path_variation(
     u_star: np.ndarray,
 ) -> float:
@@ -245,7 +245,7 @@ def path_variation(
     return float(np.linalg.norm(np.diff(u_star, axis=0), axis=1).sum())
 
 
-# Run single path.
+# Run one online learner against one known oracle path.
 def run_single_path(
     t_horizon: int,
     drift_intensity: float,
@@ -298,7 +298,7 @@ def run_single_path(
         path_variation(u_star)
     )
 
-    # The 0.9 quantile of Uniform(-0.9, 0.1) is zero, aligning theoretical coverage.
+    # This uniform noise has zero as its 0.9 quantile, matching 90% target coverage.
     score_noise = rng.uniform(-0.9, 0.1, size=t_horizon)
 
     score_clean = (
@@ -343,7 +343,7 @@ def run_single_path(
 
     u = np.zeros(feature_dim, dtype=float)
 
-    # Use a validation-like warm-up period to obtain a nonnegative initial expansion.
+    # A short warm-up gives the learner a sensible nonnegative starting expansion.
     u[0] = 1.20
 
     clean_moment_sum = np.zeros(feature_dim, dtype=float)
@@ -430,7 +430,7 @@ def run_single_path(
             s_perturbed * psi_perturbed_t
         )
 
-        # Compute conditional miscoverage exactly from the known score noise.
+        # Known simulation noise lets us calculate conditional miscoverage exactly.
         clean_threshold = (
             q_clean_t - q_star[t]
         )
@@ -447,7 +447,7 @@ def run_single_path(
             mu_clean * psi_clean_t
         )
 
-        # Perturbed scores satisfy S^delta = q*_clean + epsilon + score_shift.
+        # Perturbed scores add the chosen shift to the clean oracle score and noise.
         perturbed_threshold = (
             q_perturbed_t - q_star[t] - score_shift[t]
         )
@@ -479,7 +479,7 @@ def run_single_path(
             clean_online_loss - clean_oracle_loss
         )
 
-        # Diagnostic only: evaluate the same oracle parameters on perturbed features.
+        # This diagnostic changes features but keeps the same oracle parameters.
         oracle_q_perturbed = float(u_star[t] @ psi_perturbed_t)
 
         perturbed_online_loss = float(
@@ -616,7 +616,7 @@ def run_single_path(
     }
 
 
-# Aggregate results.
+# Average repeated simulation paths for each experiment setting.
 def aggregate_results(
     df: pd.DataFrame,
     group_columns: list[str],
@@ -653,7 +653,7 @@ def aggregate_results(
     return summary
 
 
-# Safe log slope.
+# Estimate a log-log slope only when there are enough positive finite values.
 def safe_log_slope(
     x: np.ndarray,
     y: np.ndarray,

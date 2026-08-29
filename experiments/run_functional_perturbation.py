@@ -1,4 +1,4 @@
-# Module purpose: Evaluate Functional ACI under controlled test-feature perturbations.
+# Check how the methods react when only the test-time electricity features are disturbed.
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ from src.perturbations import (  # noqa: E402
     summarise_seed_results,
 )
 
-# Parse args.
+# Read the markets, noise settings, seeds, and output folder from the command line.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -136,7 +136,7 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
-    # Read runtime arguments and prepare experiment output directories.
+    # Return the options only after all defaults and allowed choices are defined.
     return parser.parse_args()
 
 
@@ -166,11 +166,11 @@ def parse_args() -> argparse.Namespace:
 
 
 
-# Main.
+# Run every market, noise seed, and perturbation strength, then combine the results.
 def main() -> None:
     args = parse_args()
 
-    # Configure hyperparameter candidates for quick or full execution.
+    # Quick mode keeps the same method but uses fewer noise seeds and rho values.
     if args.quick:
         rhos = [0.0, 0.10, 0.30]
         number_of_seeds = 3
@@ -178,9 +178,8 @@ def main() -> None:
         rhos = sorted(set(float(rho) for rho in args.rhos))
         number_of_seeds = int(args.seeds)
 
-    # Read runtime arguments and prepare experiment output directories.
+    # Separate numerical tables from figures and the saved run configuration.
     tables_dir = args.output / "tables"
-    # Generate and save figures for headline results and diagnostics.
     figures_dir = args.output / "figures"
     diagnostics_dir = args.output / "diagnostics"
 
@@ -205,7 +204,7 @@ def main() -> None:
         "primitive_features": PRIMITIVE_FEATURES,
     }
 
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Save the exact noise setup before starting the longer nested loops.
     (
         diagnostics_dir / "perturbation_configuration.json"
     ).write_text(
@@ -219,6 +218,7 @@ def main() -> None:
         print("\n" + "=" * 90)
         print(f"Preparing market: {market}")
 
+        # Fit the clean pipeline once for this market; only test features change later.
         df, target_col, model_features = (
             load_market_data(market_prefix, args.data_dir)
         )
@@ -292,17 +292,20 @@ def main() -> None:
             fit_evaluation_map(train_context, market_seed + 10_000)
         )
 
+        # Keep an untouched copy so every rho starts from exactly the same test inputs.
         x_test_clean = df[model_features].iloc[test_slice].copy()
 
         train_std = (
             df[model_features].iloc[train_slice].std(ddof=0)
         )
 
+        # Different seeds repeat the same perturbation experiment with new random noise.
         for seed_index in range(number_of_seeds):
             perturbation_seed = (
                 args.random_state + 100_000 + 10_000 * market_seed_offset + seed_index
             )
 
+            # rho controls noise size; rho=0 is the clean reference for this seed.
             for rho in rhos:
                 rng = np.random.default_rng(
                     perturbation_seed + int(round(rho * 1_000_000))
@@ -321,6 +324,7 @@ def main() -> None:
                     clip_z=args.clip_z,
                 )
 
+                # Recalculate raw intervals from perturbed features but keep true prices fixed.
                 perturbed_predictions = (
                     replace_test_predictions(
                         clean_predictions=(
@@ -358,6 +362,7 @@ def main() -> None:
                     transform_evaluation_map(evaluation_feature_map, test_context)
                 )
 
+                # Group cut-offs still come from clean training data, not perturbed test rows.
                 test_group_masks = (
                     create_group_masks(
                         index=test_index,
@@ -448,20 +453,22 @@ def main() -> None:
 
     budget_results = pd.DataFrame(all_budget_rows)
 
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # First average repeated seeds within each market and perturbation level.
     summary = summarise_seed_results(seed_results)
 
-    # Compute coverage, interval-efficiency, and conditional-coverage metrics.
+    # Subtract each seed's rho=0 result to show the change caused by perturbation.
     degradation = compute_degradation(seed_results)
 
     degradation_summary = (
         aggregate_degradation(degradation)
     )
 
+    # Give each market equal weight in the final cross-market table.
     cross_market_summary = (
         make_cross_market_summary(seed_results)
     )
 
+    # Keep seed-level rows as well as summaries so uncertainty bars can be checked later.
     seed_results.to_csv(tables_dir / "perturbation_seed_results.csv", index=False)
 
     summary.to_csv(tables_dir / "perturbation_summary.csv", index=False)

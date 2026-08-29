@@ -1,4 +1,4 @@
-# Module purpose: Implement the rolling, Split CQR, and ACS baselines used in the paper.
+# Implement the three simpler conformal baselines used for comparison.
 
 """Strong interval-calibration baselines used in the paper experiments."""
 
@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 
-# Conformal quantile.
+# Use the finite-sample conformal correction when choosing the residual quantile.
 def conformal_quantile(scores, alpha: float = 0.1) -> float:
     """Return the finite-sample corrected conformal quantile."""
     scores = np.asarray(scores, dtype=float)
@@ -27,7 +27,7 @@ def conformal_quantile(scores, alpha: float = 0.1) -> float:
         return float(np.quantile(scores, q_level, interpolation="higher"))
 
 
-# Rolling historical interval.
+# Build each interval from prices observed before the current time step.
 def rolling_historical_interval(
     y: pd.Series,
     test_index,
@@ -41,7 +41,7 @@ def rolling_historical_interval(
     lower_test = lower.loc[test_index]
     upper_test = upper.loc[test_index]
 
-    # Fall back to expanding-window empirical quantiles before the rolling window fills.
+    # At the start there is not a full window, so use all history available so far.
     exp_lower = y.shift(1).expanding(min_periods=24).quantile(alpha / 2)
     exp_upper = y.shift(1).expanding(min_periods=24).quantile(1 - alpha / 2)
 
@@ -51,7 +51,7 @@ def rolling_historical_interval(
     return lower_test, upper_test
 
 
-# Split CQR interval.
+# Expand both raw quantile bounds by one value learned on the calibration set.
 def split_cqr_interval(
     y_cal: pd.Series,
     lower_cal: pd.Series,
@@ -77,7 +77,7 @@ def split_cqr_interval(
     return lower_cqr, upper_cqr, qhat
 
 
-# Adaptive conformal score interval.
+# Update the score threshold online after each new outcome becomes available.
 def adaptive_conformal_score_interval(
     y_test: pd.Series,
     lower_test: pd.Series,

@@ -1,4 +1,4 @@
-# Module purpose: Run Functional ACI methods and cross-market summaries on multiple markets.
+# Run the main Functional ACI comparison on all four electricity markets.
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ from src.functional_pipeline import (  # noqa: E402
     transform_evaluation_map,
 )
 
-# Parse args.
+# Read data paths, market choices, split settings, and the quick-run option.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -89,7 +89,7 @@ def parse_args() -> argparse.Namespace:
         help="Use reduced hyperparameter grids for a pipeline check.",
     )
     return parser.parse_args()
-# Tune scalar.
+# Choose the scalar learning rate using validation data only.
 def tune_scalar(
     lower: np.ndarray,
     upper: np.ndarray,
@@ -103,6 +103,7 @@ def tune_scalar(
     rows = []
     raw_width = float(np.mean(upper - lower))
 
+    # One row is saved per candidate so the final choice is not a hidden decision.
     for eta in eta_values:
         model = ScalarACI(alpha=alpha, eta=eta, max_adjustment=max_adjustment)
         result = convert_result(model.run(lower, upper, y, reset=True))
@@ -119,7 +120,7 @@ def tune_scalar(
     return table.iloc[0].to_dict(), table
 
 
-# Tune contextual.
+# Choose learning rates and a weight radius for the linear contextual model.
 def tune_contextual(
     lower: np.ndarray,
     upper: np.ndarray,
@@ -136,6 +137,7 @@ def tune_contextual(
     rows = []
     raw_width = float(np.mean(upper - lower))
 
+    # Test every listed combination rather than changing one setting informally.
     for eta_global, eta_linear, radius in product(
         eta_global_values,
         eta_linear_values,
@@ -171,7 +173,7 @@ def tune_contextual(
     return table.iloc[0].to_dict(), table
 
 
-# Tune functional.
+# Tune the pure nonlinear model on the shared validation period.
 def tune_functional(
     train_context: np.ndarray,
     lower: np.ndarray,
@@ -192,7 +194,7 @@ def tune_functional(
     rows = []
     raw_width = float(np.mean(upper - lower))
 
-    # Configure hyperparameter candidates for quick or full execution.
+    # Fit the random-feature map once on training context for this candidate.
     for (
         eta_global,
         eta_functional,
@@ -243,7 +245,7 @@ def tune_functional(
     return table.iloc[0].to_dict(), table
 
 
-# Tune hybrid.
+# Tune the model that combines global, linear, and nonlinear adjustments.
 def tune_hybrid(
     train_context: np.ndarray,
     lower: np.ndarray,
@@ -265,7 +267,7 @@ def tune_hybrid(
     base_eta_linear = float(contextual_best["eta_linear"])
     base_linear_radius = float(contextual_best["linear_radius"])
 
-    # Configure hyperparameter candidates for quick or full execution.
+    # Each grid row changes only the saved hyperparameters shown in the output table.
     if quick:
         eta_functional_values = [0.005, 0.02, 0.05]
         component_values = [128]
@@ -333,9 +335,10 @@ def tune_hybrid(
         )
 
     stage_one = pd.DataFrame(rows).sort_values("objective")
-    # Compare candidates on validation data and select each method's hyperparameters.
+    # Sort by the same validation objective used for the other ACI versions.
     best_stage_one = stage_one.iloc[0].to_dict()
 
+    # Stage two keeps the chosen feature map and searches nearby learning rates.
     stage_two_rows = []
 
     for eta_global, eta_linear, eta_functional in product(
@@ -392,7 +395,7 @@ def tune_hybrid(
     return full_table.iloc[0].to_dict(), full_table
 
 
-# Get parameter grids.
+# Return the full dissertation grid or the much smaller smoke-test grid.
 def get_parameter_grids(
     quick: bool,
 ) -> dict[str, list]:
@@ -426,7 +429,7 @@ def get_parameter_grids(
 
 
 
-# Run market.
+# Fit, tune, and evaluate every method for one market before moving to the next.
 def run_market(
     market_prefix: str,
     args: argparse.Namespace,
@@ -440,10 +443,10 @@ def run_market(
     print(f"Running market: {market}")
     print(f"Dataset: {data_path}")
 
-    # Load inputs or existing results and normalize them for downstream processing.
+    # Load one processed market and keep its observations in time order.
     df, target_col, model_features = load_market_data(market_prefix, args.data_dir)
 
-    # Split chronologically into explicit training, validation, and test periods.
+    # The final 20% is not used for model fitting or hyperparameter selection.
     train_slice, validation_slice, test_slice = (
         chronological_split(len(df), args.train_frac, args.validation_frac)
     )
@@ -480,12 +483,12 @@ def run_market(
             },
         ]
     )
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Save split dates and row counts so the experiment periods are easy to check.
     split_table.to_csv(tables_dir / f"{market_prefix}_splits.csv", index=False)
 
     market_seed = market_random_state(market_prefix, args.random_state)
 
-    # Train base quantile models and generate uncalibrated prediction intervals.
+    # Train raw lower/median/upper quantile models on the first 60% only.
     predictions = make_raw_predictions(
         df=df,
         target_col=target_col,
@@ -495,7 +498,7 @@ def run_market(
         random_state=market_seed,
     )
 
-    # Build and scale context features for conditional calibration.
+    # Context preprocessing is fitted on training rows and reused later without refitting.
     context = build_context(predictions)
     context_scaled = preprocess_context(context, train_slice)
 
@@ -526,13 +529,14 @@ def run_market(
     validation_index = predictions.index[validation_slice]
     test_index = predictions.index[test_slice]
 
+    # Limit adjustment using a robust scale taken from training interval widths.
     train_width = (
         predictions["upper_raw"].iloc[train_slice]
         - predictions["lower_raw"].iloc[train_slice]
     )
     max_adjustment = max(20.0, float(2.0 * np.nanquantile(train_width, 0.95)))
 
-    # Build the functional-error map and conditional groups for common evaluation.
+    # Use one evaluation map and one set of groups for all methods in this market.
     evaluation_feature_map = fit_evaluation_map(train_context, market_seed + 10_000)
     evaluation_map_validation = (
         transform_evaluation_map(evaluation_feature_map, validation_context)
@@ -550,11 +554,11 @@ def run_market(
         context_train=context.iloc[train_slice],
     )
 
-    # Configure hyperparameter candidates for quick or full execution.
+    # Quick mode changes grid size only; it does not change the calibration formulas.
     grids = get_parameter_grids(args.quick)
 
     print("Tuning Scalar ACI...")
-    # Compare candidates on validation data and select each method's hyperparameters.
+    # Select every method before reading its held-out test metrics.
     best_scalar, scalar_table = tune_scalar(
         lower=lower_validation,
         upper=upper_validation,
@@ -620,6 +624,7 @@ def run_market(
         random_state=market_seed,
     )
 
+    # Tuning tables make it possible to see why each saved candidate was selected.
     scalar_table.to_csv(
         diagnostics_dir / f"{market_prefix}_scalar_tuning.csv",
         index=False,
@@ -637,6 +642,7 @@ def run_market(
         index=False,
     )
 
+    # Store only plain Python values so the JSON is portable and easy to read.
     selected = {
         "alpha": float(args.alpha),
         "max_adjustment": float(max_adjustment),
@@ -672,7 +678,7 @@ def run_market(
         encoding="utf-8",
     )
 
-    # Run the final path with selected parameters to produce test predictions.
+    # Warm models on validation data, then carry their state into the held-out test period.
     final_results = run_final_models(
         selected=selected,
         alpha=args.alpha,
@@ -689,12 +695,13 @@ def run_market(
         y_test=y_test,
     )
 
+    # Raw intervals are evaluated beside calibrated intervals on identical test rows.
     method_results = {
         "Raw quantile": make_raw_result(predictions.iloc[test_slice]),
         **final_results,
     }
 
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # Build method-level metrics only after the full test path has been generated.
     summary_rows = []
 
     for method_name, result in method_results.items():
@@ -735,6 +742,7 @@ def run_market(
         ["functional_error", "worst_group_error"]
     )
 
+    # Group results reveal conditional failures that overall coverage can hide.
     group_table = make_group_table(
         market=market,
         y=y_test,
@@ -743,6 +751,7 @@ def run_market(
         target_coverage=1.0 - args.alpha,
     )
 
+    # Save hourly bounds and components so individual test predictions can be inspected.
     prediction_table = pd.DataFrame(index=test_index)
     prediction_table["market"] = market
     prediction_table["y_true"] = y_test
@@ -770,6 +779,7 @@ def run_market(
         index_label="datetime",
     )
 
+    # Rolling metrics show whether an average score hides a temporary coverage problem.
     rolling_rows = []
 
     for method_name, result in method_results.items():
@@ -816,7 +826,7 @@ def run_market(
     return market_summary, group_table, rolling_table
 
 
-# Make average summary.
+# Average each method across markets and keep standard deviations and counts.
 def make_average_summary(
     results: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -845,7 +855,7 @@ def make_average_summary(
     )
 
 
-# Make rank summary.
+# Rank methods within each market before averaging ranks across markets.
 def make_rank_summary(
     results: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -894,14 +904,14 @@ def make_rank_summary(
     )
 
 
-# Make plots.
+# Draw the main cross-market comparison and the rolling coverage plots.
 def make_plots(
     results: pd.DataFrame,
     rolling: pd.DataFrame,
     figures_dir: Path,
     alpha: float,
 ) -> None:
-    # Generate and save figures for headline results and diagnostics.
+    # Each metric gets a simple grouped bar chart with methods in the legend.
     figures_dir.mkdir(parents=True, exist_ok=True)
 
     for metric, ylabel, filename in [
@@ -930,7 +940,7 @@ def make_plots(
         plt.savefig(figures_dir / filename, dpi=220)
         plt.close()
 
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # Average rolling curves by market and method before displaying them.
     average = (
         results.groupby("method")[["functional_error", "worst_group_error", "winkler"]]
         .mean()
@@ -949,11 +959,11 @@ def make_plots(
     ax.legend()
     plt.xticks(rotation=25, ha="right")
     plt.tight_layout()
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Save the cross-market figures after all markets have contributed results.
     plt.savefig(figures_dir / "multi_market_average_calibration_error.png", dpi=220)
     plt.close()
 
-    # Plot rolling coverage separately per market to avoid overlapping curves.
+    # Use one rolling plot per market because a single plot would be hard to read.
     for market in rolling["market"].unique():
         part = rolling[rolling["market"] == market]
 
@@ -982,13 +992,12 @@ def make_plots(
         plt.close()
 
 
-# Main.
+# Create output folders, run the requested markets, and save combined tables.
 def main() -> None:
     args = parse_args()
 
-    # Read runtime arguments and prepare experiment output directories.
+    # Keep final tables, figures, and tuning details in separate folders.
     tables_dir = args.output / "tables"
-    # Generate and save figures for headline results and diagnostics.
     figures_dir = args.output / "figures"
     diagnostics_dir = args.output / "diagnostics"
 
@@ -1018,12 +1027,12 @@ def main() -> None:
     groups = pd.concat(all_groups, ignore_index=True)
     rolling = pd.concat(all_rolling, ignore_index=True)
 
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Save market-level rows first so later summaries can always be rebuilt.
     results.to_csv(tables_dir / "multi_market_results.csv", index=False)
     groups.to_csv(tables_dir / "multi_market_group_coverage.csv", index=False)
     rolling.to_csv(tables_dir / "multi_market_rolling_metrics.csv", index=False)
 
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # Cross-market averages and ranks give different but complementary comparisons.
     average_summary = make_average_summary(results)
     average_summary.to_csv(tables_dir / "multi_market_average_summary.csv", index=False)
 

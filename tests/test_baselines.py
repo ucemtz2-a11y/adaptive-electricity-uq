@@ -1,4 +1,4 @@
-# Module purpose: Test baseline definitions, online update order, and chronological splitting.
+# Check the main baseline formulas and make sure they never use future outcomes.
 
 import unittest
 
@@ -14,22 +14,22 @@ from src.calibration.baselines import (
 from src.functional_pipeline import chronological_split
 
 
-# Implement BaselineTests.
+# Group the baseline checks in one standard unittest class.
 class BaselineTests(unittest.TestCase):
-    # Test chronological split matches paper protocol.
+    # The split must keep observations in time order and match the dissertation setup.
     def test_chronological_split_matches_paper_protocol(self):
         train, validation, test = chronological_split(100, 0.60, 0.20)
         self.assertEqual((train.start, train.stop), (0, 60))
         self.assertEqual((validation.start, validation.stop), (60, 80))
         self.assertEqual((test.start, test.stop), (80, 100))
 
-    # Test conformal quantile uses finite sample correction.
+    # Check the small finite-sample correction with values that can be verified by hand.
     def test_conformal_quantile_uses_finite_sample_correction(self):
         scores = np.arange(10, dtype=float)
         self.assertEqual(conformal_quantile(scores, alpha=0.1), 9.0)
         self.assertEqual(conformal_quantile([], alpha=0.1), 0.0)
 
-    # Test split CQR applies the same scalar expansion.
+    # Split CQR should add the same calibration expansion to both sides of the interval.
     def test_split_cqr_applies_the_same_scalar_expansion(self):
         index = pd.RangeIndex(4)
         y_cal = pd.Series([0.0, 2.0, 4.0, 8.0], index=index)
@@ -50,7 +50,7 @@ class BaselineTests(unittest.TestCase):
         np.testing.assert_allclose(lower.to_numpy(), lower_test - qhat)
         np.testing.assert_allclose(upper.to_numpy(), upper_test + qhat)
 
-    # Test adaptive score predicts before updating.
+    # The current outcome must not change its own adaptive prediction interval.
     def test_adaptive_score_predicts_before_updating(self):
         index = pd.date_range("2024-01-01", periods=2, freq="h", tz="UTC")
         y = pd.Series([5.0, 0.5], index=index)
@@ -69,7 +69,7 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(result.iloc[0]["q"], 1.0)
         self.assertAlmostEqual(result.iloc[1]["q"], 1.18)
 
-    # Test rolling interval does not use current outcome.
+    # The rolling baseline may use past prices, but not the price it is predicting now.
     def test_rolling_interval_does_not_use_current_outcome(self):
         index = pd.date_range("2024-01-01", periods=40, freq="h", tz="UTC")
         y = pd.Series(np.arange(40, dtype=float), index=index)

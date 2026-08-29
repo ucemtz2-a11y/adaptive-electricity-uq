@@ -1,4 +1,4 @@
-# Module purpose: Test online calibration order and fixed-seed determinism.
+# Check the online update order and make sure fixed seeds give repeatable results.
 
 import unittest
 
@@ -8,9 +8,9 @@ from src.calibration.functional_aci import ScalarACI
 from src.functional_pipeline import run_final_models
 
 
-# Implement CalibrationTests.
+# Keep the calibrator checks together in one unittest class.
 class CalibrationTests(unittest.TestCase):
-    # Test scalar ACI predicts before updating.
+    # Scalar ACI must create the interval before learning from the current outcome.
     def test_scalar_aci_predicts_before_updating(self):
         model = ScalarACI(alpha=0.1, eta=0.2, max_adjustment=10.0)
         output = model.run(
@@ -22,7 +22,7 @@ class CalibrationTests(unittest.TestCase):
         np.testing.assert_allclose(output.adjustment, [0.0, 0.18, 0.16])
         np.testing.assert_array_equal(output.miscoverage, [1, 0, 1])
 
-    # Test all calibrators are deterministic under fixed seed.
+    # Every calibrator should return the same path when its data and seed are unchanged.
     def test_all_calibrators_are_deterministic_under_fixed_seed(self):
         rng = np.random.default_rng(7)
         train_context = rng.normal(size=(60, 3))

@@ -1,1 +1,1 @@
-# Module purpose: Mark src as the project source package.
+# This file lets Python treat src as the main project package.

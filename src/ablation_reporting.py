@@ -1,4 +1,4 @@
-# Module purpose: Aggregate ablation results and plot context, function-space, and kernel comparisons.
+# Build readable tables and plots from the three ablation experiments.
 
 """Aggregation and plotting helpers for Functional ACI ablations."""
 
@@ -24,7 +24,7 @@ FUNCTION_SPACE_ORDER = [
 ]
 
 
-# Aggregate context ablation.
+# Average each context choice across markets and calculate standard errors.
 def aggregate_context_ablation(
     results: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -58,7 +58,7 @@ def aggregate_context_ablation(
     return summary.sort_values(["method", "functional_error_mean"])
 
 
-# Add context degradation.
+# Subtract the full-context result from each reduced-context result.
 def add_context_degradation(
     results: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -70,6 +70,7 @@ def add_context_degradation(
         "worst_group_error",
     ]
 
+    # Match each reduced version with the full result from the same market and method.
     full = (
         results[results["ablation"] == "full"][["market", "method", *metrics]]
         .rename(
@@ -89,7 +90,7 @@ def add_context_degradation(
     return merged
 
 
-# Build function space tables.
+# Label the v10 methods by the type of function space they use.
 def build_function_space_tables(
     v10_results: Path,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -100,7 +101,7 @@ def build_function_space_tables(
     if not source.exists():
         raise FileNotFoundError(f"v10 result table not found: {source}")
 
-    # Load inputs or existing results and normalize them for downstream processing.
+    # This comparison uses saved v10 results, so no model is rerun here.
     results = pd.read_csv(source)
 
     function_space_map = {
@@ -133,7 +134,7 @@ def build_function_space_tables(
 
     results = results.sort_values(["market", "method_order"])
 
-    # Compute coverage, interval-efficiency, and conditional-coverage metrics.
+    # Average the same reported metrics for every function-space choice.
     metrics = [
         "coverage",
         "coverage_error",
@@ -150,7 +151,7 @@ def build_function_space_tables(
 
     grouped.columns = [f"{metric}_{statistic}" for metric, statistic in grouped.columns]
 
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # Reset the grouped index to create the final cross-market table.
     average = grouped.reset_index()
 
     pivot = results.pivot(index="market", columns="method", values=metrics)
@@ -164,6 +165,7 @@ def build_function_space_tables(
         ("Linear contextual ACI", "Scalar ACI"),
     ]
 
+    # Pairwise rows make the difference between neighbouring model spaces explicit.
     for first, second in comparisons:
         for market in results["market"].unique():
             first_row = results[
@@ -190,7 +192,7 @@ def build_function_space_tables(
     return results, average, pairwise
 
 
-# Aggregate kernel ablation.
+# Average accuracy and runtime for every random-feature setting.
 def aggregate_kernel_ablation(
     results: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -221,7 +223,7 @@ def aggregate_kernel_ablation(
     )
 
 
-# Plot context ablation.
+# Draw one grouped bar chart for each main context-ablation metric.
 def plot_context_ablation(
     summary: pd.DataFrame,
     figures_dir: Path,
@@ -259,7 +261,7 @@ def plot_context_ablation(
         plt.close()
 
 
-# Plot function space ablation.
+# Plot methods in the same scalar-to-hybrid order used in the text.
 def plot_function_space_ablation(
     average: pd.DataFrame,
     figures_dir: Path,
@@ -296,7 +298,7 @@ def plot_function_space_ablation(
         plt.close()
 
 
-# Plot kernel ablation.
+# Plot kernel quality and runtime against the number of random features.
 def plot_kernel_ablation(
     summary: pd.DataFrame,
     figures_dir: Path,

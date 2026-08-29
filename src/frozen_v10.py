@@ -1,4 +1,4 @@
-# Module purpose: Load frozen v10 artefacts and verify exact raw-prediction reproduction.
+# Load the saved v10 files and check that the old raw predictions can still be reproduced.
 
 """Frozen v10 artefact loading and exact-reproduction checks."""
 
@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 
-# Load v10 selected parameters.
+# Read the hyperparameters chosen for one market in the original v10 run.
 def load_v10_selected_parameters(
     v10_results: Path,
     market_prefix: str,
@@ -26,7 +26,7 @@ def load_v10_selected_parameters(
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-# Load v10 test predictions.
+# Read the saved test rows that are used as the reproduction reference.
 def load_v10_test_predictions(
     v10_results: Path,
     market_prefix: str,
@@ -61,7 +61,7 @@ def load_v10_test_predictions(
     return df
 
 
-# Assert raw prediction match.
+# Stop the run if regenerated raw intervals differ from the saved v10 values.
 def assert_raw_prediction_match(
     generated_predictions: pd.DataFrame,
     test_slice: slice,
@@ -69,7 +69,7 @@ def assert_raw_prediction_match(
     market: str,
     tolerance: float = 1e-10,
 ) -> dict[str, float]:
-    # Train base quantile models and generate uncalibrated prediction intervals.
+    # Compare only timestamps shared by the regenerated and saved test data.
     generated = (
         generated_predictions.iloc[test_slice][["y_true", "lower_raw", "upper_raw"]]
         .copy()
@@ -119,7 +119,7 @@ def assert_raw_prediction_match(
     return diagnostics
 
 
-# Interval result.
+# Wrap plain lower and upper bounds in the result format expected by the metrics.
 def interval_result(
     y_true: pd.Series | np.ndarray,
     lower: pd.Series | np.ndarray,

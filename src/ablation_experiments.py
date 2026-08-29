@@ -1,4 +1,4 @@
-# Module purpose: Run tuning, path replay, and per-market evaluation for context and kernel ablations.
+# Hold the model-running steps for the context and kernel ablation studies.
 
 """Experiment core for the paper's Functional ACI ablations."""
 
@@ -56,7 +56,7 @@ CONTEXT_ABLATIONS = {
 }
 
 
-# Load selected parameters.
+# Read the v10 settings chosen before any feature group is removed.
 def load_selected_parameters(
     v10_results: Path,
     market_prefix: str,
@@ -74,7 +74,7 @@ def load_selected_parameters(
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-# Preprocess selected context.
+# Impute and scale only the context columns included in this ablation.
 def preprocess_selected_context(
     context: pd.DataFrame,
     columns: list[str],
@@ -91,6 +91,7 @@ def preprocess_selected_context(
     imputer = SimpleImputer(strategy="median")
     scaler = StandardScaler()
 
+    # Fit both preprocessing steps on training rows so the test period stays unseen.
     train_imputed = imputer.fit_transform(context.iloc[train_slice][columns])
     scaler.fit(train_imputed)
 
@@ -99,7 +100,7 @@ def preprocess_selected_context(
     return scaler.transform(all_imputed)
 
 
-# Run linear path.
+# Warm up one linear model on validation data and continue it through test data.
 def run_linear_path(
     parameters: dict,
     alpha: float,
@@ -134,7 +135,7 @@ def run_linear_path(
     )
 
 
-# Run hybrid path.
+# Warm up one hybrid model on validation data and continue without resetting.
 def run_hybrid_path(
     parameters: dict,
     alpha: float,
@@ -179,7 +180,7 @@ def run_hybrid_path(
     )
 
 
-# Tune linear local.
+# Search a small learning-rate grid for the chosen subset of context columns.
 def tune_linear_local(
     base_parameters: dict,
     quick: bool,
@@ -196,7 +197,7 @@ def tune_linear_local(
 
     raw_width = float(np.mean(upper_validation - lower_validation))
 
-    # Configure hyperparameter candidates for quick or full execution.
+    # Every candidate sees the same validation rows and evaluation map.
     for eta_global, eta_linear in product(
         scaled_candidates(base_parameters["eta_global"], quick),
         scaled_candidates(base_parameters["eta_linear"], quick),
@@ -251,7 +252,7 @@ def tune_linear_local(
     return table.iloc[0].to_dict(), table
 
 
-# Tune hybrid local.
+# Tune the hybrid learning rates while keeping its v10 structure fixed.
 def tune_hybrid_local(
     base_parameters: dict,
     quick: bool,
@@ -270,7 +271,7 @@ def tune_hybrid_local(
 
     raw_width = float(np.mean(upper_validation - lower_validation))
 
-    # Configure hyperparameter candidates for quick or full execution.
+    # Build the grid explicitly so the selected values are saved and easy to inspect.
     grid = product(
         scaled_candidates(base_parameters["eta_global"], quick),
         scaled_candidates(base_parameters["eta_linear"], quick),
@@ -358,7 +359,7 @@ def tune_hybrid_local(
     return table.iloc[0].to_dict(), table
 
 
-# Run context ablation market.
+# Remove each context group in turn and evaluate both linear and hybrid ACI.
 def run_context_ablation_market(
     market_prefix: str,
     args: argparse.Namespace,
@@ -370,14 +371,14 @@ def run_context_ablation_market(
     print("\n" + "=" * 90)
     print(f"Context ablation: {market}")
 
-    # Load inputs or existing results and normalize them for downstream processing.
+    # Load one market once; every ablation uses the same observations and target.
     (
         df,
         target_col,
         model_features,
     ) = load_market_data(market_prefix, args.data_dir)
 
-    # Split chronologically into explicit training, validation, and test periods.
+    # Keep the original 60/20/20 time split for every context choice.
     (
         train_slice,
         validation_slice,
@@ -386,7 +387,7 @@ def run_context_ablation_market(
 
     market_seed = market_random_state(market_prefix, args.random_state)
 
-    # Train base quantile models and generate uncalibrated prediction intervals.
+    # Raw quantile predictions stay fixed, so only the online context is being tested.
     predictions = make_raw_predictions(
         df=df,
         target_col=target_col,
@@ -396,7 +397,7 @@ def run_context_ablation_market(
         random_state=market_seed,
     )
 
-    # Build and scale context features for conditional calibration.
+    # Build the full context first, then select and rescale columns for each ablation.
     context = build_context(predictions)
 
     full_context_scaled = preprocess_context(context, train_slice)
@@ -452,7 +453,7 @@ def run_context_ablation_market(
 
     max_adjustment = max(20.0, float(2.0 * np.nanquantile(train_width, 0.95)))
 
-    # Build the functional-error map and conditional groups for common evaluation.
+    # Use full training context for one common evaluation map and group definition.
     witness_map = fit_evaluation_map(full_train_context, market_seed + 10_000)
 
     evaluation_map_validation = (
@@ -488,10 +489,11 @@ def run_context_ablation_market(
     selected_v10 = load_selected_parameters(args.v10_results, market_prefix)
 
     rows = []
-    # Read runtime arguments and prepare experiment output directories.
+    # Keep chosen settings and complete tuning tables for each context variant.
     selected_output = {}
     tuning_output = {}
 
+    # Tune and test one context removal at a time on exactly the same data split.
     for (
         ablation_name,
         context_columns,
@@ -711,7 +713,7 @@ def run_context_ablation_market(
             index=False,
         )
 
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Save selected parameters separately so the ablation can be rerun exactly.
     (
         diagnostics_dir
         / (
@@ -773,7 +775,7 @@ def run_context_ablation_market(
     )
 
 
-# Run kernel ablation market.
+# Change only random-feature count and length scale for one prepared market.
 def run_kernel_ablation_market(
     market_prefix: str,
     prepared: dict,
@@ -783,7 +785,7 @@ def run_kernel_ablation_market(
 
     print(f"Kernel approximation ablation: " f"{market}")
 
-    # Configure hyperparameter candidates for quick or full execution.
+    # Quick mode uses a smaller grid but follows the same fitting and evaluation steps.
     if args.quick:
         component_values = [64, 128]
         length_scale_values = [1.0, 2.0]
@@ -795,6 +797,7 @@ def run_kernel_ablation_market(
 
     rows = []
 
+    # Time every kernel setting as well as measuring its prediction quality.
     for (
         n_components,
         length_scale,

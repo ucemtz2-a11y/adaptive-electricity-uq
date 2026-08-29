@@ -1,4 +1,4 @@
-# Module purpose: Download historical ENTSO-E data for multiple electricity markets.
+# Download the 2022--2023 price, load, and generation files used by the project.
 
 import sys
 from pathlib import Path
@@ -14,7 +14,7 @@ from src.data.entsoe_config import get_api_key, load_config
 from src.protocol import ENTSOE_MARKETS
 
 
-# Safe download.
+# Let the other series continue downloading if one ENTSO-E request fails.
 def safe_download(name, query_func, out_path):
     try:
         print(f"Downloading {name}...")
@@ -25,7 +25,7 @@ def safe_download(name, query_func, out_path):
         print(f"Failed to download {name}: {e}")
 
 
-# Main.
+# Read the dates once, then download the same three series for every market.
 def main():
     config = load_config()
 
@@ -39,6 +39,7 @@ def main():
     raw_dir = Path("data/raw/entsoe_multi")
     raw_dir.mkdir(parents=True, exist_ok=True)
 
+    # Each market gets its own folder so similarly named CSV files do not clash.
     for market in ENTSOE_MARKETS:
         print("\n" + "=" * 60)
         print(f"Market: {market}")

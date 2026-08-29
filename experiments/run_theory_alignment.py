@@ -1,4 +1,4 @@
-# Module purpose: Test theoretical regret, functional-error, and perturbation-budget relationships.
+# Run simulations that check whether the measured behaviour follows the theory.
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from src.theory_alignment import (
 )
 
 
-# Parse args.
+# Read simulation sizes, repetitions, settings, and output location.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -106,23 +106,23 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--random-state", type=int, default=20260810)
 
-    # Read runtime arguments and prepare experiment output directories.
+    # Return the complete command-line setup after validating each option.
     return parser.parse_args()
 
 
-# Save figures.
+# Draw the theory-check plots from the aggregated simulation rows.
 def save_figures(
     grid_summary: pd.DataFrame,
     scaling_summary: pd.DataFrame,
     figures_dir: Path,
 ) -> None:
-    # Generate and save figures for headline results and diagnostics.
+    # Put all generated plots in one versioned figures folder.
     figures_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Test the relationship between dynamic regret and the unified theoretical driver.
+    # Plot 1 checks whether regret grows with the combined theoretical driver.
     plt.figure(figsize=(8, 5))
 
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # Average repetitions before fitting the guide line shown on the plot.
     plt.scatter(
         grid_summary["unified_regret_driver_mean"],
         grid_summary["dynamic_regret_clean_avg_mean"],
@@ -137,12 +137,12 @@ def save_figures(
 
     plt.tight_layout()
 
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Add a simple fitted line to make the overall trend easier to see.
     plt.savefig(figures_dir / "regret_vs_unified_driver.png", dpi=240)
 
     plt.close()
 
-    # 2. Test clean-path functional error against the calibration driver.
+    # Plot 2 compares clean functional error with its calibration driver.
     plt.figure(figsize=(8, 5))
 
     plt.scatter(
@@ -163,7 +163,7 @@ def save_figures(
 
     plt.close()
 
-    # 3. Test the relationship between drift intensity and dynamic regret.
+    # Plot 3 shows how stronger oracle drift changes dynamic regret.
     zero_rho = grid_summary[np.isclose(grid_summary["rho"], 0.0)].sort_values(
         "drift_intensity"
     )
@@ -209,7 +209,7 @@ def save_figures(
 
         plt.close()
 
-    # 4. Test coverage-state flips against the one-step perturbation budget.
+    # Plot 4 compares coverage flips with the one-step perturbation budget.
     plt.figure(figsize=(8, 5))
 
     plt.scatter(
@@ -230,7 +230,7 @@ def save_figures(
 
     plt.close()
 
-    # 5. Test how cumulative error scales with the time horizon.
+    # Plot 5 checks how cumulative error changes as the time horizon grows.
     scaling_sorted = (
         scaling_summary.sort_values("T")
     )
@@ -300,11 +300,11 @@ def save_figures(
     plt.close()
 
 
-# Main.
+# Run all simulation settings, aggregate repetitions, and save tables and plots.
 def main() -> None:
     args = parse_args()
 
-    # Configure hyperparameter candidates for quick or full execution.
+    # Quick mode uses smaller grids and fewer repetitions for a fast check.
     if args.quick:
         args.seeds = 3
         args.drift_grid = [0.0, 0.5, 1.0]
@@ -312,12 +312,12 @@ def main() -> None:
         args.t_grid = [1000, 3000, 5000]
         args.grid_t = 3000
 
-    # Read runtime arguments and prepare experiment output directories.
+    # Keep raw tables, figures, and configuration details in separate folders.
     tables_dir = (
         args.output / "tables"
     )
 
-    # Generate and save figures for headline results and diagnostics.
+    # Save the exact settings so each figure can be traced back to its simulation.
     figures_dir = (
         args.output / "figures"
     )
@@ -382,7 +382,7 @@ def main() -> None:
         ),
     }
 
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Keep every repeated path before creating the shorter average table.
     (
         diagnostics_dir / "theory_alignment_configuration.json"
     ).write_text(
@@ -436,7 +436,7 @@ def main() -> None:
 
     grid_results = pd.DataFrame(grid_rows)
 
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # Summaries and fitted slopes are calculated only after all repetitions finish.
     grid_summary = aggregate_results(grid_results, ["T", "drift_intensity", "rho"])
 
     scaling_rows = []

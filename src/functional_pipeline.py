@@ -1,4 +1,4 @@
-# Module purpose: Provide the shared frozen data, model, and evaluation pipeline.
+# Keep the data preparation and model steps shared by the real-market experiments.
 
 """Shared, frozen helpers for the paper's Functional ACI experiments."""
 
@@ -53,7 +53,7 @@ CONTEXT_COLUMNS = [
 ]
 
 
-# Find column.
+# Match common CSV column names without making every dataset use identical labels.
 def find_column(
     columns: Iterable[str],
     candidates: list[str],
@@ -72,7 +72,7 @@ def find_column(
     )
 
 
-# Create lag features.
+# Build model inputs from past prices and yesterday's electricity-system values.
 def create_lag_features(
     df: pd.DataFrame,
     target_col: str,
@@ -90,6 +90,7 @@ def create_lag_features(
     if "residual_load" not in df.columns:
         df["residual_load"] = df["load"] - df["wind"] - df["solar"]
 
+    # Every shift is positive, so these features cannot use the price being predicted.
     df["price_lag_1"] = df[target_col].shift(1)
     df["price_lag_24"] = df[target_col].shift(24)
     df["price_lag_168"] = df[target_col].shift(168)
@@ -108,7 +109,7 @@ def create_lag_features(
     return df, MODEL_FEATURES.copy()
 
 
-# Load market dataset.
+# Load one processed market, sort it by time, and create its modelling features.
 def load_market_dataset(
     path: Path,
 ) -> tuple[pd.DataFrame, str, list[str]]:
@@ -122,6 +123,7 @@ def load_market_dataset(
 
     df[datetime_col] = pd.to_datetime(df[datetime_col], errors="coerce", utc=True)
 
+    # Keeping the last duplicate gives one unambiguous observation per UTC timestamp.
     df = (
         df.dropna(subset=[datetime_col]).sort_values(datetime_col)
         .drop_duplicates(subset=[datetime_col], keep="last")
@@ -141,12 +143,12 @@ def load_market_dataset(
     return df, target_col, model_features
 
 
-# Market dataset path.
+# Build the standard processed filename for one market.
 def market_dataset_path(data_dir: Path, market: str) -> Path:
     return Path(data_dir) / f"{market}_dataset.csv"
 
 
-# Load market data.
+# Load a market by name using the standard directory layout.
 def load_market_data(
     market: str,
     data_dir: Path,
@@ -154,7 +156,7 @@ def load_market_data(
     return load_market_dataset(market_dataset_path(data_dir, market))
 
 
-# Build a local candidate grid around a selected learning rate.
+# Try the saved learning rate and its nearby half/double values during a full run.
 def scaled_candidates(value: float, quick: bool = False) -> list[float]:
     value = float(value)
     if quick:
@@ -162,7 +164,7 @@ def scaled_candidates(value: float, quick: bool = False) -> list[float]:
     return sorted({max(0.0001, 0.5 * value), value, min(0.20, 2.0 * value)})
 
 
-# Combine the frozen validation metrics into the paper's selection objective.
+# Give coverage the largest weight while still considering conditional error and width.
 def selection_objective(metrics: dict, raw_width: float) -> float:
     width_ratio = metrics["avg_width"] / max(raw_width, 1e-12)
     return float(
@@ -173,7 +175,7 @@ def selection_objective(metrics: dict, raw_width: float) -> float:
     )
 
 
-# Chronological split.
+# Return train, validation, and test slices without shuffling the time series.
 def chronological_split(
     n: int,
     train_frac: float,
@@ -196,7 +198,7 @@ def chronological_split(
     )
 
 
-# Fit quantile model.
+# Fit one LightGBM model for a requested conditional quantile.
 def fit_quantile_model(
     x_train: pd.DataFrame,
     y_train: pd.Series,
@@ -220,7 +222,7 @@ def fit_quantile_model(
     return model
 
 
-# Make raw predictions.
+# Train the lower, median, and upper models on the training period only.
 def make_raw_predictions(
     df: pd.DataFrame,
     target_col: str,
@@ -257,6 +259,7 @@ def make_raw_predictions(
     predictions["median_raw"] = median_model.predict(x)
     predictions["upper_raw"] = upper_model.predict(x)
 
+    # Swap the rare crossed bounds so every saved interval has lower <= upper.
     crossing = predictions["lower_raw"] > predictions["upper_raw"]
     if crossing.any():
         old_lower = predictions.loc[crossing, "lower_raw"].copy()
@@ -267,7 +270,7 @@ def make_raw_predictions(
     return predictions
 
 
-# Build context.
+# Create the information used to change interval width during online calibration.
 def build_context(
     predictions: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -281,6 +284,7 @@ def build_context(
     context = pd.DataFrame(index=index)
     context["raw_width"] = upper - lower
 
+    # shift(1) is important: rolling statistics stop before the current outcome.
     context["rolling_price_std_24"] = (
         y.rolling(24, min_periods=12).std().shift(1)
     )
@@ -300,7 +304,7 @@ def build_context(
     return context
 
 
-# Preprocess context.
+# Learn missing-value replacements and scaling from the training rows only.
 def preprocess_context(
     context: pd.DataFrame,
     train_slice: slice,
@@ -308,6 +312,7 @@ def preprocess_context(
     imputer = SimpleImputer(strategy="median")
     scaler = StandardScaler()
 
+    # Validation and test rows reuse these training values to avoid data leakage.
     train_imputed = imputer.fit_transform(context.iloc[train_slice][CONTEXT_COLUMNS])
     scaler.fit(train_imputed)
 
@@ -315,7 +320,7 @@ def preprocess_context(
     return scaler.transform(all_imputed)
 
 
-# Convert result.
+# Convert a calibrator output object to the dictionary used by evaluation code.
 def convert_result(output) -> dict[str, np.ndarray]:
     return {
         "lower": output.lower,
@@ -328,7 +333,7 @@ def convert_result(output) -> dict[str, np.ndarray]:
     }
 
 
-# Make raw result.
+# Put uncalibrated quantile intervals in the same format as calibrated methods.
 def make_raw_result(
     predictions: pd.DataFrame,
 ) -> dict[str, np.ndarray]:
@@ -350,7 +355,7 @@ def make_raw_result(
     }
 
 
-# Fit evaluation map.
+# Fit a separate feature map used only to measure functional coverage error.
 def fit_evaluation_map(
     train_context: np.ndarray,
     random_state: int,
@@ -364,7 +369,7 @@ def fit_evaluation_map(
     return feature_map
 
 
-# Transform evaluation map.
+# Combine scaled linear context with nonlinear features for the final metric.
 def transform_evaluation_map(
     feature_map: CenteredRandomFourierFeatures,
     context: np.ndarray,
@@ -375,12 +380,13 @@ def transform_evaluation_map(
     return np.column_stack([linear_features, nonlinear_features])
 
 
-# Create group masks.
+# Define readable test groups using thresholds learned from training context.
 def create_group_masks(
     index: pd.Index,
     context_part: pd.DataFrame,
     context_train: pd.DataFrame,
 ) -> dict[str, np.ndarray]:
+    # Training medians keep group definitions independent of the test outcomes.
     volatility_cut = float(context_train["rolling_price_std_168"].median())
     width_cut = float(context_train["raw_width"].median())
     miscoverage_cut = float(context_train["rolling_raw_miscoverage_168"].median())
@@ -418,7 +424,7 @@ def create_group_masks(
 
 
 
-# Make group table.
+# Calculate coverage and width separately for every method and test group.
 def make_group_table(
     market: str,
     y: np.ndarray,
@@ -458,7 +464,7 @@ def make_group_table(
     return pd.DataFrame(rows)
 
 
-# Run final models.
+# Warm each selected model on validation data, then continue into the test period.
 def run_final_models(
     selected: dict,
     alpha: float,
@@ -479,6 +485,7 @@ def run_final_models(
         eta=selected["scalar"]["eta"],
         max_adjustment=max_adjustment,
     )
+    # reset=False carries the learned validation state forward instead of restarting.
     scalar_model.run(lower_validation, upper_validation, y_validation, reset=True)
     scalar_test = scalar_model.run(lower_test, upper_test, y_test, reset=False)
 

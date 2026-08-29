@@ -1,4 +1,4 @@
-# Module purpose: Test metric formulas, group handling, and the standard result schema.
+# Check the metric formulas with small examples whose answers are easy to calculate.
 
 import unittest
 
@@ -12,9 +12,9 @@ from src.evaluation.metrics import (
 )
 
 
-# Implement MetricTests.
+# Keep all metric checks in one unittest class.
 class MetricTests(unittest.TestCase):
-    # Test interval metrics match hand calculation.
+    # Compare coverage, width, and Winkler score with a hand calculation.
     def test_interval_metrics_match_hand_calculation(self):
         y = np.array([0.0, 2.0, 5.0])
         lower = np.array([0.0, 0.0, 0.0])
@@ -28,7 +28,7 @@ class MetricTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["median_width"], 1.0)
         self.assertAlmostEqual(metrics["winkler"], 46.0 / 3.0)
 
-    # Test functional error matches vector definition.
+    # Check that functional error follows its vector formula exactly.
     def test_functional_error_matches_vector_definition(self):
         miscoverage = np.array([0.0, 1.0, 0.0])
         feature_map = np.array([[1.0, 0.0], [1.0, 2.0], [1.0, -1.0]])
@@ -41,7 +41,7 @@ class MetricTests(unittest.TestCase):
             expected,
         )
 
-    # Test worst group error uses nonempty conditional groups.
+    # Empty groups should be ignored when the worst coverage gap is calculated.
     def test_worst_group_error_uses_nonempty_conditional_groups(self):
         y = np.array([0.0, 0.0, 2.0, 2.0])
         lower = np.zeros(4)
@@ -58,7 +58,7 @@ class MetricTests(unittest.TestCase):
             0.9,
         )
 
-    # Test evaluate returns standard result schema.
+    # All experiments rely on evaluate returning the same set of result fields.
     def test_evaluate_returns_standard_result_schema(self):
         y = np.array([0.0, 2.0])
         lower = np.array([-1.0, 0.0])

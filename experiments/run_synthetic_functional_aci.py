@@ -1,4 +1,4 @@
-# Module purpose: Generate controlled synthetic data and test adaptation to nonlinearity and drift.
+# Create simple simulated datasets where nonlinearity and drift are known in advance.
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ METHODS = (
 )
 
 
-# Store synthetic inputs, context, targets, and raw prediction intervals together.
+# Keep all arrays from one simulated scenario together so they cannot become misaligned.
 @dataclass
 class Data:
     y: np.ndarray
@@ -58,7 +58,7 @@ class Data:
     drift_index: int | None
 
 
-# Parse args.
+# Read scenario size, seeds, output folder, and the optional quick flag.
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument(
@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-# Splits.
+# Divide each simulated sequence into train, validation, and test slices in time order.
 def splits(n: int, train_frac: float, val_frac: float) -> tuple[slice, slice, slice]:
     train_end = int(n * train_frac)
     val_end = int(n * (train_frac + val_frac))
@@ -86,7 +86,7 @@ def splits(n: int, train_frac: float, val_frac: float) -> tuple[slice, slice, sl
     return slice(0, train_end), slice(train_end, val_end), slice(val_end, n)
 
 
-# Ar1.
+# Generate a smooth AR(1) feature whose current value depends on its previous value.
 def ar1(n: int, rho: float, rng: np.random.Generator) -> np.ndarray:
     e = rng.normal(size=n)
     x = np.empty(n)
@@ -97,14 +97,14 @@ def ar1(n: int, rho: float, rng: np.random.Generator) -> np.ndarray:
     return x
 
 
-# Roll shift.
+# Shift an array without wrapping future values back to the start.
 def roll_shift(x: np.ndarray, window: int, min_periods: int) -> np.ndarray:
     return (
         pd.Series(x).rolling(window, min_periods=min_periods).mean().shift(1).to_numpy()
     )
 
 
-# Generate.
+# Generate one controlled scenario and its deliberately imperfect raw intervals.
 def generate(
     scenario: str,
     n: int,
@@ -179,7 +179,7 @@ def generate(
     return Data(y, lower, upper, context_raw, latent, sigma, drift_index)
 
 
-# Preprocess.
+# Fit context scaling on training rows and apply it to the full simulated path.
 def preprocess(x: np.ndarray, train: slice) -> np.ndarray:
     imputer = SimpleImputer(strategy="median")
     scaler = StandardScaler()
@@ -188,7 +188,7 @@ def preprocess(x: np.ndarray, train: slice) -> np.ndarray:
     return scaler.transform(imputer.transform(x))
 
 
-# Witness map.
+# Build the fixed feature map used to measure functional coverage error.
 def witness_map(train_x: np.ndarray, x: np.ndarray, seed: int) -> np.ndarray:
     rff = CenteredRandomFourierFeatures(
         n_components=256,
@@ -200,7 +200,7 @@ def witness_map(train_x: np.ndarray, x: np.ndarray, seed: int) -> np.ndarray:
     return np.column_stack([linear, rff.transform(x)])
 
 
-# Masks.
+# Define simple test groups from context values and time positions.
 def masks(data: Data, target: slice, train: slice) -> dict[str, np.ndarray]:
     train_sigma = data.sigma[train]
     target_sigma = data.sigma[target]
@@ -224,7 +224,7 @@ def masks(data: Data, target: slice, train: slice) -> dict[str, np.ndarray]:
     return out
 
 
-# Raw result.
+# Put uncalibrated synthetic intervals in the common result format.
 def raw_result(y: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> dict[str, np.ndarray]:
     zero = np.zeros(len(y))
     return {
@@ -238,7 +238,7 @@ def raw_result(y: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> dict[str,
     }
 
 
-# Worst group.
+# Calculate the largest coverage gap across the synthetic test groups.
 def worst_group(
     y: np.ndarray,
     result: dict[str, np.ndarray],
@@ -256,7 +256,7 @@ def worst_group(
     return float(max(values)) if values else np.nan
 
 
-# Evaluate.
+# Calculate all reported metrics for one synthetic method path.
 def evaluate(
     method: str,
     y: np.ndarray,
@@ -285,7 +285,7 @@ def evaluate(
     return out
 
 
-# Score.
+# Combine validation metrics into the same style of tuning score used elsewhere.
 def score(metrics: dict[str, float | str], raw_width: float, alpha: float) -> float:
     return float(
         3.0 * abs(float(metrics["coverage"]) - (1.0 - alpha))
@@ -295,7 +295,7 @@ def score(metrics: dict[str, float | str], raw_width: float, alpha: float) -> fl
     )
 
 
-# Grids.
+# Return readable hyperparameter candidates for each calibration method.
 def grids(quick: bool) -> dict[str, list[dict[str, float | int]]]:
     if quick:
         scalar_eta = [0.02, 0.05]
@@ -335,7 +335,7 @@ def grids(quick: bool) -> dict[str, list[dict[str, float | int]]]:
     }
 
 
-# Hybrid grid.
+# Build the hybrid candidate list from the smaller component grids.
 def hybrid_grid(
     quick: bool,
     best_linear: dict[str, float | int],
@@ -374,7 +374,7 @@ def hybrid_grid(
     ]
 
 
-# New model.
+# Create one calibrator from a method name and one parameter dictionary.
 def new_model(
     method: str,
     params: dict[str, float | int],
@@ -424,13 +424,13 @@ def new_model(
     raise ValueError(method)
 
 
-# Fit map.
+# Fit nonlinear feature maps only for methods that actually use them.
 def fit_map(model: Any, method: str, train_x: np.ndarray) -> None:
     if method in {"Functional ACI", "Hybrid Functional ACI"}:
         model.fit_feature_map(train_x)
 
 
-# Run once.
+# Run one method on one continuous interval path.
 def run_once(
     method: str,
     params: dict[str, float | int],
@@ -450,7 +450,7 @@ def run_once(
     return convert(model.run(lower, upper, y, x, reset=True))
 
 
-# Run warm test.
+# Learn state on validation rows, then continue into test rows without resetting.
 def run_warm_test(
     method: str,
     params: dict[str, float | int],
@@ -478,7 +478,7 @@ def run_warm_test(
     return convert(model.run(lower_test, upper_test, y_test, test_x, reset=False))
 
 
-# Tune.
+# Select each method's settings using validation rows only.
 def tune(
     data: Data,
     x: np.ndarray,
@@ -490,7 +490,7 @@ def tune(
 ) -> dict[str, dict[str, float | int]]:
     train_x, val_x = x[train], x[val]
     y, lower, upper = data.y[val], data.lower[val], data.upper[val]
-    # Build the functional-error map and conditional groups for common evaluation.
+    # Every candidate is judged with one fixed evaluation map and group definition.
     witness = witness_map(train_x, val_x, seed + 10_000)
     group_masks = masks(data, val, train)
     raw_width = float(np.mean(upper - lower))
@@ -500,7 +500,7 @@ def tune(
         "meta": {"max_adjustment": max_adjustment}
     }
 
-    # Configure hyperparameter candidates for quick or full execution.
+    # Quick mode keeps only the first candidate for a fast pipeline check.
     for method, candidates in grids(quick).items():
         best_value = np.inf
         best: dict[str, float | int] | None = None
@@ -531,7 +531,7 @@ def tune(
 
         selected[method] = best
 
-    # Compare candidates on validation data and select each method's hyperparameters.
+    # Store the full tuning table so the winning candidate can be checked later.
     hybrid_best_value = np.inf
     hybrid_best: dict[str, float | int] | None = None
 
@@ -563,7 +563,7 @@ def tune(
     return selected
 
 
-# Delay.
+# Measure how long coverage takes to recover after the known drift point.
 def delay(
     miscoverage: np.ndarray,
     drift_step: int | None,
@@ -584,7 +584,7 @@ def delay(
     return np.nan
 
 
-# Run seed.
+# Generate, tune, and evaluate all methods for one scenario and random seed.
 def run_seed(
     scenario: str,
     seed: int,
@@ -665,7 +665,7 @@ def run_seed(
     return rows, curves
 
 
-# Summarise.
+# Average repeated seeds for each scenario and method.
 def summarise(results: pd.DataFrame) -> pd.DataFrame:
     metrics = (
         "coverage",
@@ -701,7 +701,7 @@ def summarise(results: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# Metric plot.
+# Draw one grouped bar chart for a selected synthetic metric.
 def metric_plot(
     summary: pd.DataFrame,
     metric: str,
@@ -739,7 +739,7 @@ def metric_plot(
     plt.close()
 
 
-# Drift plot.
+# Show the rolling miscoverage paths around the simulated drift point.
 def drift_plot(curves: pd.DataFrame, alpha: float, path: Path) -> None:
     frame = curves[curves["scenario"] == "abrupt_drift"]
     drift_values = frame["drift_step"].dropna()
@@ -762,18 +762,18 @@ def drift_plot(curves: pd.DataFrame, alpha: float, path: Path) -> None:
     plt.close()
 
 
-# Main.
+# Run every requested scenario and seed, then save detailed and averaged results.
 def main() -> None:
     args = parse_args()
-    # Configure hyperparameter candidates for quick or full execution.
+    # Quick mode reduces sample size and repetitions but leaves the formulas unchanged.
     n = min(args.n_samples, 2500) if args.quick else args.n_samples
     n_seeds = min(args.n_seeds, 5) if args.quick else args.n_seeds
-    # Split chronologically into explicit training, validation, and test periods.
+    # Use the same time-ordered fractions for every simulated scenario.
     train, val, test = splits(n, args.train_frac, args.validation_frac)
 
-    # Read runtime arguments and prepare experiment output directories.
+    # Create separate output folders for results, plots, and tuning details.
     tables = args.output / "tables"
-    # Generate and save figures for headline results and diagnostics.
+    # Figures are written separately from the CSV tables used to build them.
     figures = args.output / "figures"
     diagnostics = args.output / "diagnostics"
     for directory in (tables, figures, diagnostics):
@@ -789,7 +789,7 @@ def main() -> None:
         print(f"  {scenario}")
         selected_all[scenario] = tune(data, x, train, val, args.alpha, args.quick, seed)
 
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Save selected settings before evaluating them across fresh random seeds.
     (diagnostics / "selected_hyperparameters.json").write_text(
         json.dumps(selected_all, indent=2),
         encoding="utf-8",
@@ -819,7 +819,7 @@ def main() -> None:
 
     seed_results = pd.DataFrame(all_rows)
     curve_table = pd.concat(all_curves, ignore_index=True)
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # Average seeds only after keeping all seed-level results in a separate CSV.
     summary = summarise(seed_results)
 
     seed_results.to_csv(tables / "synthetic_seed_results.csv", index=False)

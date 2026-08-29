@@ -1,4 +1,4 @@
-# Module purpose: Aggregate experiment stages into paper tables, figures, and written findings.
+# Collect the earlier experiment outputs and turn them into the final dissertation summary.
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ from src.final_summary_reporting import (
 )
 
 
-# Parse args.
+# Read where each versioned result folder is stored.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -77,13 +77,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-# Main.
+# Build all v14 tables, figures, and short written findings in one run.
 def main() -> None:
     args = parse_args()
 
-    # Read runtime arguments and prepare experiment output directories.
+    # Keep tables, figures, LaTeX, and small diagnostic files in separate folders.
     tables_dir = args.output / "tables"
-    # Generate and save figures for headline results and diagnostics.
     figures_dir = args.output / "figures"
     latex_dir = args.output / "latex"
     diagnostics_dir = args.output / "diagnostics"
@@ -91,10 +90,10 @@ def main() -> None:
     for directory in [tables_dir, figures_dir, latex_dir, diagnostics_dir]:
         directory.mkdir(parents=True, exist_ok=True)
 
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # Rebuild the synthetic averages from seed-level results before making the table.
     synthetic = derive_synthetic_summary(args.v9, args.alpha)
 
-    # Load inputs or existing results and normalize them for downstream processing.
+    # Load the saved v10--v13 tables; this script does not rerun any model.
     v10_results = prepare_table(
         read_csv(args.v10 / "tables" / "multi_market_results.csv"),
         args.alpha,
@@ -130,6 +129,7 @@ def main() -> None:
         args.alpha,
     )
 
+    # Table 1 keeps only the columns needed for the synthetic comparison.
     synthetic_main = select_columns(
         synthetic,
         [
@@ -171,7 +171,7 @@ def main() -> None:
         ]
     )
 
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Save both CSV and LaTeX versions so the numbers have one shared source.
     save_table(
         synthetic_main,
         tables_dir / "table_1_synthetic_main.csv",
@@ -183,6 +183,7 @@ def main() -> None:
         "tab:synthetic-main",
     )
 
+    # Table 2 shows each method separately for all four real markets.
     market_main = select_columns(
         v10_results,
         [
@@ -217,6 +218,7 @@ def main() -> None:
         "tab:multi-market-main",
     )
 
+    # Table 3 averages the methods that use the same raw prediction intervals.
     unified_main = select_columns(
         unified_average,
         [
@@ -248,6 +250,7 @@ def main() -> None:
         "tab:unified-baselines",
     )
 
+    # Table 4 follows performance as the test features are perturbed more strongly.
     perturbation_main = select_columns(
         perturbation,
         [
@@ -280,6 +283,7 @@ def main() -> None:
         "tab:perturbation-main",
     )
 
+    # Table 5 shows what happens when one group of context variables is removed.
     context_main = select_columns(
         context_ablation,
         [
@@ -305,6 +309,7 @@ def main() -> None:
         "tab:context-ablation",
     )
 
+    # Table 6 compares scalar, linear, nonlinear, and hybrid function spaces.
     function_main = select_columns(
         function_space,
         [
@@ -337,6 +342,7 @@ def main() -> None:
         "tab:function-space-ablation",
     )
 
+    # Table 7 checks whether the random-feature size changes accuracy or runtime.
     kernel_main = select_columns(
         kernel_ablation,
         [
@@ -368,6 +374,7 @@ def main() -> None:
         "tab:kernel-ablation",
     )
 
+    # Derive headline percentages directly from tables instead of typing them by hand.
     headline_table, findings = (
         derive_headline_findings(
             synthetic=synthetic,
@@ -393,6 +400,7 @@ def main() -> None:
         encoding="utf-8",
     )
 
+    # Record exactly which result folders were used to build this summary.
     manifest = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "alpha": args.alpha,
@@ -412,6 +420,7 @@ def main() -> None:
         encoding="utf-8",
     )
 
+    # Use the same prepared tables for the figures and the written results section.
     make_figures(
         synthetic=synthetic,
         v10_results=v10_results,
@@ -425,6 +434,7 @@ def main() -> None:
 
     write_results_section(latex_dir / "experimental_results_summary.tex", findings)
 
+    # Create one LaTeX file that includes all eight generated tables in order.
     table_files = [
         "table_1_synthetic_main.tex",
         "table_2_multi_market_main.tex",

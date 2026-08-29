@@ -1,4 +1,4 @@
-# Module purpose: Clean and merge multi-market ENTSO-E files into modelling data.
+# Turn the downloaded historical CSV files into one clean hourly table per market.
 
 import sys
 from pathlib import Path
@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.protocol import ENTSOE_MARKETS
 
 
-# Read ENTSO-E CSV.
+# Read timestamps carefully because some ENTSO-E files start with a metadata row.
 def read_entsoe_csv(path: Path) -> tuple[pd.DataFrame, pd.Series | None]:
     """
     Read an ENTSO-E CSV file robustly.
@@ -29,7 +29,7 @@ def read_entsoe_csv(path: Path) -> tuple[pd.DataFrame, pd.Series | None]:
 
     metadata = None
 
-    # Skip the first row as ENTSO-E metadata when it does not contain a timestamp.
+    # A missing first timestamp usually means this row describes the generation columns.
     if raw[time_col].isna().iloc[0]:
         metadata = raw.iloc[0].copy()
 
@@ -43,7 +43,7 @@ def read_entsoe_csv(path: Path) -> tuple[pd.DataFrame, pd.Series | None]:
     return raw, metadata
 
 
-# To hourly.
+# Put hourly and quarter-hourly sources onto the same hourly time grid.
 def to_hourly(df: pd.DataFrame) -> pd.DataFrame:
     """
     Convert quarter-hourly or hourly data to hourly frequency.
@@ -54,7 +54,7 @@ def to_hourly(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# Read single series.
+# Reduce a price or load file to one clearly named hourly column.
 def read_single_series(path: Path, value_name: str) -> pd.DataFrame:
     """
     Read price or load series.
@@ -74,7 +74,7 @@ def read_single_series(path: Path, value_name: str) -> pd.DataFrame:
     return out
 
 
-# Read generation.
+# Add the available wind columns together and do the same for solar.
 def read_generation(path: Path) -> pd.DataFrame:
     """
     Extract hourly wind and solar generation.
@@ -119,7 +119,7 @@ def read_generation(path: Path) -> pd.DataFrame:
     return out
 
 
-# Preprocess market.
+# Join price, load, wind, and solar for one market and save the modelling table.
 def preprocess_market(market: str):
     raw_dir = Path("data/raw/entsoe_multi") / market
     out_dir = Path("data/processed/multi_market")
@@ -142,9 +142,11 @@ def preprocess_market(market: str):
     load = read_single_series(load_path, "load")
     generation = read_generation(generation_path)
 
+    # Use an outer join first so timestamps from one source are not silently lost.
     df = prices.join(load, how="outer").join(generation, how="outer")
     df = df.sort_index()
 
+    # Fill only from earlier observations, then remove any rows that are still incomplete.
     df = df.ffill()
 
     for col in ["price", "load", "wind", "solar"]:
@@ -171,7 +173,7 @@ def preprocess_market(market: str):
     return out_path
 
 
-# Main.
+# Process every market independently so one missing historical file does not stop the rest.
 def main():
     for market in ENTSOE_MARKETS:
         try:

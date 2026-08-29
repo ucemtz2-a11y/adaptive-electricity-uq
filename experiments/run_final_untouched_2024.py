@@ -1,4 +1,4 @@
-# Module purpose: Run the final untouched-2024 evaluation under frozen historical settings.
+# Check the frozen historical pipeline and run the separate final 2024 evaluation.
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-# Reuse frozen v10 implementations and metrics; never tune from 2024 results.
+# Reuse the checked v10 method code so nothing is retuned from 2024 results.
 from src.functional_pipeline import (  # noqa: E402
     build_context,
     convert_result,
@@ -39,14 +39,14 @@ from src.calibration.functional_aci import (  # noqa: E402
     ScalarACI,
 )
 
-# Reuse the exact v13 strong-baseline definitions for consistent comparisons.
+# Use the same baseline formulas as v13 for a fair final comparison.
 from src.calibration.baselines import (  # noqa: E402
     adaptive_conformal_score_interval,
     rolling_historical_interval,
     split_cqr_interval,
 )
 
-# Reuse v13 data loading and frozen-result reproduction utilities.
+# Share the existing loader and v10 reproduction checks instead of copying them here.
 from src.frozen_v10 import (  # noqa: E402
     assert_raw_prediction_match,
     interval_result,
@@ -67,7 +67,7 @@ FINAL_END = pd.Timestamp("2025-01-01 00:00:00", tz="UTC")
 LOCK_NAME = "FINAL_2024_EVALUATION_COMPLETED.lock"
 
 
-# Parse args.
+# Require the user to choose either a safe preflight or the one-shot final run.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -130,7 +130,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-# Sha256 file.
+# Hash each input file so the manifest records exactly which data was used.
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -142,7 +142,7 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-# Read processed.
+# Read one processed CSV, sort UTC timestamps, and remove duplicate hours.
 def read_processed(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(path)
@@ -179,7 +179,7 @@ def read_processed(path: Path) -> pd.DataFrame:
     return df
 
 
-# Load combined market.
+# Join verified historical rows with 2024 rows while keeping their boundary visible.
 def load_combined_market(
     historical_path: Path,
     final_path: Path,
@@ -209,8 +209,8 @@ def load_combined_market(
 
     combined = combined[[target_col, *model_features]].copy()
 
-    # Count verified 2022-2023 development observations, then use that count to rebuild
-    # the original 60/20/20 boundaries, exactly matching the v10 time slices.
+    # Count historical rows first, then rebuild the original 60/20/20 v10 slices.
+    # This stops the appended 2024 rows from changing any development boundary.
     n_dev = int((combined.index < FINAL_START).sum())
 
     if n_dev < 2000:
@@ -228,7 +228,7 @@ def load_combined_market(
     return combined, target_col, model_features, n_dev
 
 
-# Old slices.
+# Return slices for the historical validation/test periods and the separate 2024 period.
 def old_slices(
     n_dev: int,
     train_frac: float,
@@ -247,7 +247,7 @@ def old_slices(
     )
 
 
-# Run online methods through 2024.
+# Warm the ACI methods on historical data, then continue their state through 2024.
 def run_online_methods_through_2024(
     selected: dict,
     alpha: float,
@@ -383,7 +383,7 @@ def run_online_methods_through_2024(
     }
 
 
-# Preflight one market.
+# Reproduce one market's saved v10 raw intervals without evaluating any 2024 label.
 def preflight_one_market(
     prefix: str,
     args: argparse.Namespace,
@@ -411,7 +411,7 @@ def preflight_one_market(
     if not final_path.exists():
         raise FileNotFoundError(final_path)
 
-    # Load inputs or existing results and normalize them for downstream processing.
+    # Read historical data only during preflight.
     final_raw = read_processed(final_path)
 
     final_2024 = final_raw.loc[
@@ -435,14 +435,14 @@ def preflight_one_market(
     if missing:
         raise KeyError(f"{prefix}: frozen v10 JSON missing {missing}")
 
-    # Reproduce v10 using historical data only; do not read 2024 labels.
+    # Load the saved v10 rows that the regenerated predictions must match.
     from src.functional_pipeline import (
         chronological_split,
         load_market_dataset,
     )
 
     old_df, target_col, features = load_market_dataset(historical_path)
-    # Split chronologically into explicit training, validation, and test periods.
+    # Rebuild the original historical train, validation, and test slices.
     train_slice, _, test_slice = chronological_split(
         len(old_df),
         args.train_frac,
@@ -451,7 +451,7 @@ def preflight_one_market(
 
     seed = market_random_state(prefix, args.random_state)
 
-    # Train base quantile models and generate uncalibrated prediction intervals.
+    # Regenerate raw bounds using the same v10 models and market seed.
     old_predictions = make_raw_predictions(
         df=old_df,
         target_col=target_col,
@@ -486,7 +486,7 @@ def preflight_one_market(
     }
 
 
-# Execute one market.
+# Run the full frozen pipeline for one market after preflight has passed.
 def execute_one_market(
     prefix: str,
     args: argparse.Namespace,
@@ -505,12 +505,12 @@ def execute_one_market(
         args.final_data_dir / f"{prefix}_dataset.csv"
     )
 
-    # Load inputs or existing results and normalize them for downstream processing.
+    # Load historical and final-year rows without changing their UTC order.
     df, target_col, model_features, n_dev = (
         load_combined_market(historical_path, final_path)
     )
 
-    # Split chronologically into explicit training, validation, and test periods.
+    # Keep historical splits fixed and place all 2024 rows in one final slice.
     train_slice, validation_slice, devtest_slice = (
         old_slices(n_dev, args.train_frac, args.validation_frac)
     )
@@ -519,7 +519,7 @@ def execute_one_market(
 
     seed = market_random_state(prefix, args.random_state)
 
-    # Preserve the frozen v10 base-model definitions and training slices exactly.
+    # Base quantile models still train only on the original historical training slice.
     predictions = make_raw_predictions(
         df=df,
         target_col=target_col,
@@ -529,9 +529,9 @@ def execute_one_market(
         random_state=seed,
     )
 
-    # Verify exact v10 raw-prediction reproduction before evaluating 2024 labels.
+    # Stop before final evaluation if historical raw predictions have changed at all.
     stored_v10 = load_v10_test_predictions(args.v10_results, prefix)
-    # Train base quantile models and generate uncalibrated prediction intervals.
+    # Once reproduction passes, use those same models to predict the appended 2024 rows.
     raw_match = assert_raw_prediction_match(
         generated_predictions=predictions,
         test_slice=devtest_slice,
@@ -539,7 +539,7 @@ def execute_one_market(
         market=market,
     )
 
-    # Build and scale context features for conditional calibration.
+    # Fit context preprocessing on historical training rows only.
     context = build_context(predictions)
     context_scaled = preprocess_context(context, train_slice)
 
@@ -553,15 +553,15 @@ def execute_one_market(
     if not ((final_index >= FINAL_START) & (final_index < FINAL_END)).all():
         raise RuntimeError(f"{market}: final slice is not exactly inside 2024.")
 
-    # Use the exact v10 evaluation feature map.
+    # Reuse the v10 evaluation-feature seed and training context.
     evaluation_feature_map = fit_evaluation_map(train_context, seed + 10_000)
-    # Build the functional-error map and conditional groups for common evaluation.
+    # Transform 2024 context with the already fitted evaluation map.
     evaluation_map_final = transform_evaluation_map(
         evaluation_feature_map,
         final_context,
     )
 
-    # Use the exact v10 group definitions and training-period thresholds.
+    # Group thresholds come from historical training context, never from 2024 outcomes.
     final_group_masks = create_group_masks(
         index=final_index,
         context_part=context.iloc[final_slice],
@@ -608,8 +608,8 @@ def execute_one_market(
 
     method_results = {"Raw quantile": make_raw_result(predictions.iloc[final_slice])}
 
-    # Keep v10 online classes and hyperparameters frozen; sequentially replay the verified test period,
-    # Then carry the final online state forward into 2024 without resetting.
+    # Replay the verified historical test period first, then enter 2024 without resetting.
+    # This carries forward online state but never changes the frozen hyperparameters.
     method_results.update(
         run_online_methods_through_2024(
             selected=selected,
@@ -631,11 +631,9 @@ def execute_one_market(
         )
     )
 
-    # --------------------------------------------------------------
-    # Strong baselines retain their frozen v13 definitions.
-    # --------------------------------------------------------------
+    # Run the three v13 baselines with their original definitions and update order.
 
-    # 1. Rolling historical intervals use only previously realized prices.
+    # Rolling intervals use only prices observed before the hour being predicted.
     lower_roll, upper_roll = rolling_historical_interval(
         y=df[target_col],
         test_index=final_index,
@@ -646,7 +644,7 @@ def execute_one_market(
         interval_result(y_final_series, lower_roll, upper_roll)
     )
 
-    # 2. Split CQR uses the same raw validation intervals as v13.
+    # Split CQR learns its one expansion from the historical validation intervals.
     y_cal = predictions["y_true"].iloc[validation_slice]
     lower_cal = predictions["lower_raw"].iloc[validation_slice]
     upper_cal = predictions["upper_raw"].iloc[validation_slice]
@@ -665,12 +663,11 @@ def execute_one_market(
         upper_cqr,
     )
 
-    # 3. Adaptive conformal scores retain the v13 q_init and eta formulas;
-    #    process the verified historical test period before entering 2024.
+    # Adaptive scores keep the v13 initial value and learning-rate formulas.
+    # They also replay historical test feedback before continuing into 2024.
     theta_max = float(selected["max_adjustment"])
 
-    # Freeze eta before observing 2024 performance, using only the known horizon length,
-    # consistent with the v13 definition.
+    # eta uses only the known 2024 horizon length and is fixed before seeing performance.
     eta_aci = (
         theta_max / (10.0 * np.sqrt(len(y_final_series)))
     )
@@ -700,9 +697,7 @@ def execute_one_market(
         )
     )
 
-    # --------------------------------------------------------------
-    # EXACT v10 evaluation.
-    # --------------------------------------------------------------
+    # Evaluate all final methods with the same v10 metrics and group definitions.
     summary_rows = []
 
     for method_name, result in method_results.items():
@@ -725,7 +720,7 @@ def execute_one_market(
         )
         summary_rows.append(metrics)
 
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # Keep one summary row per method and market before cross-market averaging.
     summary = pd.DataFrame(summary_rows)
 
     group_table = make_group_table(
@@ -736,7 +731,7 @@ def execute_one_market(
         target_coverage=1.0 - args.alpha,
     )
 
-    # Save hourly predictions, method names, and state variables for paper auditing.
+    # Save hourly intervals and online components so individual results can be checked.
     pred = pd.DataFrame(
         {
             "datetime": final_index,
@@ -756,7 +751,7 @@ def execute_one_market(
         pred[f"linear_component_{safe}"] = result["linear_component"]
         pred[f"functional_component_{safe}"] = result["functional_component"]
 
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Include data hashes and reproduction differences in the market diagnostics.
     pred.to_csv(predictions_dir / f"{prefix}_final_2024_predictions.csv", index=False)
 
     summary.to_csv(tables_dir / f"{prefix}_final_2024_summary.csv", index=False)
@@ -804,14 +799,14 @@ def execute_one_market(
     return summary, group_table, meta
 
 
-# Main.
+# Run safe preflight for every market, then stop or continue according to the chosen flag.
 def main() -> None:
     args = parse_args()
 
-    # Read runtime arguments and prepare experiment output directories.
+    # Read the requested mode and prepare the output folder without touching source data.
     args.output.mkdir(parents=True, exist_ok=True)
     tables_dir = args.output / "tables"
-    # Train base quantile models and generate uncalibrated prediction intervals.
+    # Record input file hashes before any model or metric is run.
     predictions_dir = tables_dir / "predictions"
     tables_dir.mkdir(parents=True, exist_ok=True)
     predictions_dir.mkdir(parents=True, exist_ok=True)
@@ -828,9 +823,7 @@ def main() -> None:
             "untouched-final-test claim."
         )
 
-    # --------------------------------------------------------------
-    # PRE-FLIGHT
-    # --------------------------------------------------------------
+    # Always reproduce all requested historical markets before opening final results.
     manifest = {
         "protocol": (
             "Frozen v10/v13 pipeline; old 60/20/20 development split "
@@ -858,7 +851,7 @@ def main() -> None:
     manifest_path = (
         args.output / "protocol_manifest_PRE_2024_EVALUATION.json"
     )
-    # Save result tables, prediction details, and reproducible diagnostics.
+    # Save a PRE manifest even when the command stops after the safe check.
     manifest_path.write_text(
         json.dumps(manifest, indent=2, default=str),
         encoding="utf-8",
@@ -882,9 +875,7 @@ def main() -> None:
             encoding="utf-8",
         )
 
-    # --------------------------------------------------------------
-    # ONE-SHOT FINAL 2024 EVALUATION
-    # --------------------------------------------------------------
+    # The execute-once path starts only after every historical preflight has passed.
     all_summaries = []
     all_groups = []
     metadata = {}
@@ -900,7 +891,7 @@ def main() -> None:
         all_groups.append(groups)
         metadata[prefix] = meta
 
-    # Aggregate results across markets, scenarios, or seeds for comparison.
+    # Average market results at the end, while keeping all market-level rows.
     full_summary = pd.concat(all_summaries, ignore_index=True)
     full_groups = pd.concat(all_groups, ignore_index=True)
 

@@ -1,33 +1,18 @@
 # Hybrid Functional Adaptive Conformal Inference
 
-Code for the dissertation **Adaptive Uncertainty Quantification for
-Non-stationary Stochastic Features**. The repository implements Hybrid
-Functional Adaptive Conformal Inference (HF-ACI) and the experiments reported
-in the paper: synthetic benchmarks, four-market development experiments,
-strong baselines, stochastic-feature perturbations, ablations,
-theory-alignment simulations, and the frozen one-shot 2024 evaluation.
+This repository contains the code for my dissertation. 
 
-## Reproducibility contract
+The main method is Hybrid Functional Adaptive Conformal Inference (HF-ACI). I
+use it to study prediction intervals for electricity prices when the data and
+the input features change over time. The experiments include synthetic data,
+four European electricity markets, comparisons with other conformal methods,
+feature perturbations, ablation studies, and a final test on 2024 data.
 
-The empirical pipeline follows the paper exactly:
+## Setup
 
-- Markets: DE-LU, DK1, DK2, and SE3.
-- Development data: hourly observations from 2022--2023.
-- Chronological development split: 60% training, 20% validation, and 20%
-  development holdout.
-- Final data: the 8,784 UTC hours of calendar year 2024.
-- Base forecasts, context transformations, hyperparameters, evaluation maps,
-  group definitions, and random-feature seeds are frozen before the 2024 run.
-- Online methods predict first and update only after observing the corresponding
-  outcome.
-
-Do not tune models using the 2024 outputs. The `--check-only` mode verifies the
-frozen historical reproduction without computing 2024 performance.
-
-## Installation
-
-Python 3.12 was used for the final experiments. Create an isolated environment
-and install the pinned dependencies:
+I used Python 3.12 for the final experiments. The easiest way to install the
+project is to create a virtual environment and install the packages in
+`requirements.txt`:
 
 ```bash
 python3.12 -m venv .venv
@@ -36,118 +21,150 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-For ENTSO-E downloads, copy `.env.example` to `.env` and set
-`ENTSOE_API_KEY`. Raw data, processed data, and generated outputs are ignored
-by Git because they are large or contain local paths.
+## Preparing the data
 
-## Data preparation
+The experiments use four electricity markets: DE-LU, DK1, DK2, and SE3.
 
-The multi-market download uses the date range in `config/config.yaml` for the
-2022--2023 development data:
+To download data from ENTSO-E, first copy `.env.example` to `.env` and add your
+API key as `ENTSOE_API_KEY`. Then download and process the 2022--2023 data:
 
 ```bash
 python src/data/download_entsoe_multi_market.py
 python src/data/preprocess_multi_market.py
 ```
 
-The final-year scripts write to separate directories so the historical files
-cannot be overwritten:
+The dates for this part are stored in `config/config.yaml`.
+
+The 2024 data is downloaded separately so that it does not overwrite the
+earlier data:
 
 ```bash
 python src/data/download_entsoe_multi_2024.py
 python src/data/preprocess_entsoe_multi_2024.py
 ```
 
-Expected processed files are:
+After preprocessing, the files should be in:
 
 ```text
 data/processed/multi_market/{DE_LU,DK_1,DK_2,SE_3}_dataset.csv
 data/processed/multi_market_2024/{DE_LU,DK_1,DK_2,SE_3}_dataset.csv
 ```
 
-## Paper experiments
+The data and generated outputs are not uploaded to Git because they are large
+and may contain local file paths.
 
-Run the development-stage experiments in this order:
+## Running the experiments
+
+The dissertation experiments are numbered v9 to v16. Run the development
+experiments in this order:
 
 ```bash
-# Synthetic benchmark (v9)
+# v9: synthetic experiments
 python experiments/run_synthetic_functional_aci.py
 
-# Four-market HF-ACI experiment and frozen hyperparameter selection (v10)
+# v10: main experiment on four electricity markets
 python experiments/run_multi_market_functional_aci.py
 
-# Feature perturbation robustness analysis (v11)
+# v11: feature perturbation experiment
 python experiments/run_functional_perturbation.py
 
-# Context, function-space, and kernel ablations (v12)
+# v12: ablation experiments
 python experiments/run_functional_ablation.py
 
-# Unified strong-baseline comparison (v13)
+# v13: comparison with strong baseline methods
 python experiments/run_strong_baselines_v10.py
 
-# Development-result tables and figures (v14)
+# v14: create the final development tables and figures
 python experiments/run_final_summary.py
 
-# Theory-alignment simulations (v15)
+# v15: simulations comparing the method with the theory
 python experiments/run_theory_alignment.py
 ```
 
-The longer development scripts provide `--quick` modes for smoke checks. These
-reduced runs are not the paper results.
+Some experiments take a while. You can add `--quick` to the longer commands to
+check that the code runs, for example:
 
-Verify the frozen historical pipeline before opening the final labels:
+```bash
+python experiments/run_multi_market_functional_aci.py --quick
+```
+
+Quick runs use smaller parameter grids, so their results are only for checking
+the code and are not the final dissertation results.
+
+## Final 2024 experiment (v16)
+
+The 2024 data is used as a final test. It must not be used to tune the models.
+Before running the final test, use this command to check that the historical
+2022--2023 pipeline still reproduces the saved v10 predictions:
 
 ```bash
 python experiments/run_final_untouched_2024.py --check-only
 ```
 
-The confirmatory command is intentionally guarded by a lock file:
+If the check passes, the final evaluation can be run once with:
 
 ```bash
 python experiments/run_final_untouched_2024.py --execute-once
 ```
 
-The paper's first one-shot run produced a cross-market functional coverage
-error of 0.0142 and a mean Winkler score of 69.58 for HF-ACI.
+The script uses a lock file to help prevent the final test from being run by
+accident more than once. In the original one-shot run, HF-ACI had a
+cross-market functional coverage error of 0.0142 and a mean Winkler score of
+69.58.
 
-## Repository structure
+The main experimental settings are:
+
+- 2022--2023 data is split in time order: 60% training, 20% validation, and
+  20% development test data.
+- The final dataset contains all 8,784 UTC hours in 2024.
+- Model settings, context transformations, evaluation features, group
+  definitions, and random seeds are fixed before the 2024 evaluation.
+- Each online method makes its prediction before it sees the true value for
+  that time step.
+
+## Results
+
+Tables, figures, and diagnostic files are saved under:
 
 ```text
-config/                         ENTSO-E date and market configuration
-src/calibration/functional_aci.py
-                                S-ACI, L-ACI, F-ACI, and HF-ACI
-src/calibration/baselines.py    rolling, Split CQR, and ACS baselines
-src/evaluation/metrics.py       authoritative paper metric implementations
-src/functional_pipeline.py      shared market loader and frozen experiment pipeline
-src/frozen_v10.py               frozen artefact loading and reproduction checks
-src/protocol.py                 shared market metadata, seeds, and frozen defaults
-src/theory_alignment.py         theory-alignment simulation and regret core
-src/ablation_experiments.py     context/kernel ablation execution core
-src/ablation_reporting.py       ablation aggregation and figures
-src/perturbations.py            stochastic-feature perturbation computation
-src/perturbation_reporting.py   perturbation figures
-src/final_summary_data.py       paper-table preparation and headline findings
-src/final_summary_reporting.py  final figures and LaTeX/text outputs
-src/data/entsoe_config.py       shared ENTSO-E configuration/API-key loading
-src/data/                       multi-market download and preprocessing
-experiments/                    paper experiment entry points only
+outputs/versions/
 ```
 
-See `MIGRATION.md` for old-to-new path mappings, removed legacy files,
-compatibility notes, equivalence checks, and remaining technical debt.
+Each experiment has its own versioned folder, such as
+`results_v10_multi_market_functional` or `results_v14_final_summary`.
 
-Generated tables and figures are written under `outputs/versions/` and are not
-tracked by default.
+## Main folders and files
 
-## Verification
+```text
+config/                         experiment dates and configuration
+data/                           downloaded and processed data
+experiments/                    scripts used to run each experiment
+outputs/versions/               generated tables, figures, and diagnostics
+src/calibration/                HF-ACI and baseline calibration methods
+src/data/                       ENTSO-E download and preprocessing scripts
+src/evaluation/metrics.py       evaluation metrics used in the dissertation
+src/functional_pipeline.py      shared electricity-market experiment code
+src/protocol.py                 shared market names, seeds, and default settings
+tests/                          small regression and end-to-end tests
+```
 
-Run the lightweight unit tests and import checks with:
+`MIGRATION.md` contains more detail about the earlier code cleanup and the
+checks used to make sure the results did not change.
+
+## Checking the code
+
+Run the tests with:
 
 ```bash
 python -m unittest discover -s tests
-python -m compileall -q src experiments
 ```
 
-The most important end-to-end check is the frozen historical preflight shown
-above; it regenerates the old raw intervals and verifies agreement with the
-stored v10 predictions before any final-year metric is computed.
+You can also check that all Python files compile:
+
+```bash
+python -m compileall -q src experiments tests
+```
+
+At the time of writing, the repository has 14 tests. The most important final
+check is the `--check-only` command above because it verifies all four markets
+without calculating any 2024 performance results.

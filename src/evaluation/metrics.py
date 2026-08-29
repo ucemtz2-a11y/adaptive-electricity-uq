@@ -1,4 +1,4 @@
-# Module purpose: Provide the authoritative interval and conditional-coverage metrics.
+# Calculate the interval and conditional-coverage measures reported in the dissertation.
 
 """Authoritative metric implementations for all paper experiments."""
 
@@ -11,7 +11,7 @@ import numpy as np
 from src.calibration.functional_aci import Array, _as_1d, _as_2d
 
 
-# Interval metrics.
+# Start with the usual coverage, width, and Winkler score for prediction intervals.
 def interval_metrics(
     y_true: Array,
     lower: Array,
@@ -47,7 +47,7 @@ def interval_metrics(
     }
 
 
-# Functional coverage error.
+# Measure whether errors remain correlated with the chosen evaluation features.
 def functional_coverage_error(
     miscoverage: Array,
     feature_map: Array,
@@ -64,7 +64,7 @@ def functional_coverage_error(
     return float(np.linalg.norm(discrepancy))
 
 
-# Rolling functional coverage error.
+# Repeat the functional error over a moving window to show changes through time.
 def rolling_functional_coverage_error(
     miscoverage: Array,
     feature_map: Array,
@@ -99,7 +99,7 @@ def rolling_functional_coverage_error(
     return output
 
 
-# Compute worst group error.
+# Find the largest coverage gap among the non-empty test groups.
 def compute_worst_group_error(
     y: np.ndarray,
     lower: np.ndarray,
@@ -123,7 +123,7 @@ def compute_worst_group_error(
     return float(max(errors)) if errors else np.nan
 
 
-# Evaluate.
+# Put every metric for one method into the same result dictionary.
 def evaluate(
     method_name: str,
     y: np.ndarray,
